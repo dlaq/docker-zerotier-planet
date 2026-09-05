@@ -33,36 +33,44 @@ PostgreSQL 为正式路径；强行改成 SQLite 会形成长期兼容分支。�
 公网绑定、HTTP、直接暴露 Controller API、任意来源 relay 都允许由用户选择，但界面会显示
 高风险警告、要求管理员重新输入密码，并记录安全审计事件。
 
-## 1Panel Compose 生产部署
+## 1Panel 只粘贴 Compose 部署
 
-支持 Linux AMD64 和 ARM64。GitHub 安全门禁分别构建、扫描两种架构并生成 SBOM，全部
-通过后把五个组件发布为多架构 Docker Hub 标签。生产 VPS 只拉取镜像，不本地编译；
-容器由 1Panel 的“容器 → 编排”统一管理：
+交付给普通部署者的是 [`docker-compose.1panel.yml`](docker-compose.1panel.yml) 的完整
+文本，不是仓库根目录的 `docker-compose.yml`。部署者不需要 GitHub 源码、不需要运行
+项目脚本，也不需要创建 `/etc/ztplanet` 文件。
+
+在 VPS 终端生成两个不同的随机值：
 
 ```bash
-git clone --branch v1.1.0 --depth 1 \
-  https://github.com/dlaq/docker-zerotier-planet.git /srv/ztplanet-v1.1.0
-cd /srv/ztplanet-v1.1.0
-sudo ./scripts/prepare-1panel.sh v1.1.0 dlaq/zerotier-planet-test
+openssl rand -hex 32
+openssl rand -hex 48
 ```
 
-然后在 1Panel 新建名为 `ztplanet` 的编排，选择路径
-`/opt/ztplanet/docker-compose.yml`，设置 `ZTPLANET_RELEASE=v1.1.0` 并启动。
-数据库密码和认证密钥只保存在 root 所有的 `/etc/ztplanet/runtime.env`，不粘贴进
-1Panel Compose 文本。
+在 1Panel 的“容器 → 编排 → 创建编排”中把名称设为 `ztplanet`，粘贴完整 Compose，
+并在环境变量区填写：
 
-源码构建定义已独立放在 `docker-compose.build.yml`；正式 `docker-compose.yml` 不包含
-`build`，适合 1Panel 和普通 `docker compose pull/up`。本地审计构建使用 `./build.sh`。
+```env
+ZTPLANET_DB_PASSWORD=第一条随机值
+ZTPLANET_AUTH_SECRET=第二条随机值
+```
 
-首次访问需信任自签名证书并注册管理员。之后进入
-`Admin → System & Exposure / 系统与暴露面` 完成运行配置。
+启动后从本机建立 SSH 隧道：
 
-旧版 `myztplanet` 迁移必须先停止并备份 `data/zerotier/one`，再导入
-`ztplanet_zerotier-data` 命名卷，最后由 1Panel 启动。旧容器和原目录在验收前不删除。
+```bash
+ssh -N -L 3443:127.0.0.1:3443 管理用户@VPS公网IP
+```
 
-生产机首次部署、SSH 安全访问、同机/跨机旧数据迁移以及旧 Planet 保留步骤见
-[docs/PRODUCTION-DEPLOYMENT.md](docs/PRODUCTION-DEPLOYMENT.md)。不要再次运行旧版本安装脚本，
-旧脚本的安装流程会删除原 `data/zerotier` 目录。
+浏览器访问 `https://localhost:3443`，接受本实例自签名证书并注册首个管理员。管理端默认
+仅绑定回环地址，ZeroTier 默认开放 `UDP/9993`，TCP fallback relay 默认关闭。
+
+旧版 `myztplanet` 必须先停止并备份其映射到 `/var/lib/zerotier-one` 的真实宿主机目录，
+再把备份导入 `ztplanet_zerotier-data` 命名卷。旧容器和原目录在验收前不得删除。
+
+只使用 Compose 的完整步骤、环境变量、内网/公网绑定、relay 开启方法及原机/跨机迁移命令
+见 [docs/PRODUCTION-DEPLOYMENT.md](docs/PRODUCTION-DEPLOYMENT.md)。文档不再假设部署者拥有源码。
+
+仓库根目录的 `docker-compose.yml` 只供需要受限宿主机配置代理的高级安装使用；它不能
+脱离源码和 `/etc/ztplanet` 单独粘贴。源码构建定义位于 `docker-compose.build.yml`。
 
 ## 功能边界
 

@@ -1,0 +1,264 @@
+name: ztplanet
+
+# 本文件用于 1Panel“粘贴 Compose 内容”部署：不需要下载源码或创建宿主机配置文件。
+# 创建编排前必须在 1Panel 环境变量中设置：
+#   ZTPLANET_DB_PASSWORD：只使用 64 位十六进制随机字符串
+#   ZTPLANET_AUTH_SECRET：至少 64 位随机字符串
+# 生成方法：分别执行 openssl rand -hex 32 和 openssl rand -hex 48。
+# 1Panel 操作：容器 -> 编排 -> 创建编排，名称必须为 ztplanet，粘贴全文并填写上述变量。
+# 默认访问：在自己的电脑执行 ssh -N -L 3443:127.0.0.1:3443 用户@VPS公网IP，
+# 然后打开 https://localhost:3443。默认公网只需放行 UDP/9993，不要放行 TCP/3443。
+# 开放 relay：增加 COMPOSE_PROFILES=relay、RELAY_BIND_ADDRESS、RELAY_PUBLIC_PORT 和
+# RELAY_ALLOWED_CIDRS；外层不是真 TLS，留空 CIDR 表示允许任何来源。
+
+services:
+  postgres:
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.0@sha256:6ea416f2fb99986e165f4930abdd28fe0c736def0c84e229513fcac8b6e1f401
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ztnet
+      POSTGRES_DB: ztnet
+      POSTGRES_PASSWORD: ${ZTPLANET_DB_PASSWORD:?请设置64位十六进制数据库密码}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - password_encryption=scram-sha-256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      app-network:
+        ipv4_address: 172.31.255.4
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ztnet -d ztnet"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+
+  zerotier:
+    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.0@sha256:51be0704376cf67b77f88ecf4544eae9793eeeae9d15947bf167b29154eb086c
+    restart: unless-stopped
+    volumes:
+      - zerotier-data:/var/lib/zerotier-one
+    networks:
+      app-network:
+        ipv4_address: 172.31.255.2
+    ports:
+      - "${ZT_BIND_ADDRESS:-0.0.0.0}:${ZT_PUBLIC_PORT:-9993}:9993/udp"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "zerotier-cli", "-D/var/lib/zerotier-one", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  ztnet:
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
+    restart: unless-stopped
+    user: "1001:1001"
+    environment:
+      DATABASE_URL: "postgresql://ztnet:${ZTPLANET_DB_PASSWORD:?请设置64位十六进制数据库密码}@postgres:5432/ztnet?schema=public"
+      NEXTAUTH_URL: "https://${MANAGEMENT_HOST:-localhost}:${MANAGEMENT_PORT:-3443}"
+      NEXTAUTH_URL_INTERNAL: http://ztnet:3000
+      NEXTAUTH_SECRET: ${ZTPLANET_AUTH_SECRET:?请设置至少64位认证密钥}
+      ZT_ADDR: http://zerotier:9993
+      ZT_SECRET_FILE: /run/zerotier-controller/authtoken.secret
+      ZT_IDENTITY_PUBLIC_FILE: /run/zerotier-controller/identity.public
+      NEXTAUTH_SESSION_MAX_AGE: "28800"
+      ZTPLANET_LOGIN_ATTEMPTS: "5"
+      ZTPLANET_LOGIN_LOCKOUT_SECONDS: "900"
+      NPM_CONFIG_CACHE: /tmp/npm-cache
+    volumes:
+      - zerotier-data:/run/zerotier-controller:ro
+      - ztnet-planet:/var/lib/zerotier-one
+      - ztnet-backups:/app/tmp/backups
+    networks:
+      app-network:
+        ipv4_address: 172.31.255.3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      zerotier:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=1001,gid=1001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  gateway-init:
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.0@sha256:6ea416f2fb99986e165f4930abdd28fe0c736def0c84e229513fcac8b6e1f401
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown -R 1002:1002 /data /config && chmod 0700 /data /config"]
+    volumes:
+      - gateway-data:/data
+      - gateway-config:/config
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+
+  gateway:
+    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.0@sha256:449c826588895579f6d00356849ed20422fffe5904139c9621ca22de76159131
+    restart: unless-stopped
+    user: "1002:1002"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+        mode: 0444
+    volumes:
+      - gateway-data:/data
+      - gateway-config:/config
+    ports:
+      - "${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${MANAGEMENT_PORT:-3443}:3443/tcp"
+    networks:
+      - app-network
+    depends_on:
+      gateway-init:
+        condition: service_completed_successfully
+      ztnet:
+        condition: service_healthy
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+
+  relay:
+    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.0@sha256:01b1391d565d15dff7486cd8a1631781acd1d354d92e77a188a3f17078a8dc34
+    profiles: ["relay"]
+    restart: unless-stopped
+    environment:
+      RELAY_LISTEN: 0.0.0.0:4443
+      RELAY_METRICS_LISTEN: ""
+      RELAY_ALLOWED_CIDRS: ${RELAY_ALLOWED_CIDRS:-}
+      RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-128}
+      RELAY_MAX_CONNECTIONS_PER_IP: ${RELAY_MAX_CONNECTIONS_PER_IP:-4}
+      RELAY_HANDSHAKE_TIMEOUT_SECONDS: ${RELAY_HANDSHAKE_TIMEOUT_SECONDS:-10}
+      RELAY_IDLE_TIMEOUT_SECONDS: ${RELAY_IDLE_TIMEOUT_SECONDS:-300}
+      RELAY_PACKETS_PER_SECOND: ${RELAY_PACKETS_PER_SECOND:-200}
+      RELAY_BYTES_PER_SECOND: ${RELAY_BYTES_PER_SECOND:-2097152}
+      RELAY_GLOBAL_PACKETS_PER_SECOND: ${RELAY_GLOBAL_PACKETS_PER_SECOND:-2000}
+      RELAY_GLOBAL_BYTES_PER_SECOND: ${RELAY_GLOBAL_BYTES_PER_SECOND:-20971520}
+      RELAY_MAX_DESTINATIONS: ${RELAY_MAX_DESTINATIONS:-64}
+      RELAY_MIN_DESTINATION_PORT: ${RELAY_MIN_DESTINATION_PORT:-1025}
+    ports:
+      - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_PUBLIC_PORT:-4443}:4443/tcp"
+    networks:
+      relay-egress:
+        ipv4_address: 172.31.254.2
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,uid=65532,gid=65532
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 256m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ztplanet-relay", "--healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+configs:
+  caddyfile:
+    content: |
+      {
+        admin off
+        auto_https disable_redirects
+      }
+
+      https://${MANAGEMENT_HOST:-localhost}:3443 {
+        tls internal
+        header {
+          -Server
+          X-Content-Type-Options "nosniff"
+          X-Frame-Options "DENY"
+          Referrer-Policy "no-referrer"
+          Permissions-Policy "camera=(), microphone=(), geolocation=()"
+          Strict-Transport-Security "max-age=31536000"
+        }
+        reverse_proxy ztnet:3000
+      }
+
+volumes:
+  zerotier-data:
+  ztnet-planet:
+  postgres-data:
+  ztnet-backups:
+  gateway-data:
+  gateway-config:
+
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.255.0/24
+  relay-egress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.254.0/28

@@ -25,6 +25,20 @@ for file in build.sh deploy.sh scripts/*.sh services/zerotier/entrypoint.sh serv
 done
 python3 -m json.tool security/relay-seccomp.json >/dev/null
 
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    compose_db_password=ci-only-0123456789abcdef0123456789abcdef0123456789abcdef
+    compose_auth_secret=ci-only-abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    ZTPLANET_DB_PASSWORD="$compose_db_password" \
+        ZTPLANET_AUTH_SECRET="$compose_auth_secret" \
+        docker compose -f docker-compose.1panel.yml config --quiet
+    ZTPLANET_DB_PASSWORD="$compose_db_password" \
+        ZTPLANET_AUTH_SECRET="$compose_auth_secret" \
+        COMPOSE_PROFILES=relay \
+        docker compose -f docker-compose.1panel.yml config --quiet
+else
+    echo "NOTE: Docker Compose is unavailable; standalone 1Panel Compose validation skipped." >&2
+fi
+
 cd "$repo_dir/services/relay"
 "$cargo_command" fmt -- --check
 "$cargo_command" test --locked

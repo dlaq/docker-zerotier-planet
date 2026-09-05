@@ -99,6 +99,8 @@ Docker Hub 正式标签的清单摘要与平台如下；这些摘要来自发布
 - PostgreSQL 运行层替换旧 `gosu`、使用 `su-exec` 并扁平化，避免携带无关历史包。
 - 修复最小 ZeroTier 镜像数字属主和依赖元数据审计透明度。
 - 修复 ZTNet REST API 缺少 Token 时返回未捕获 500 的问题，现返回 401。
+- 新增可直接粘贴到 1Panel 的独立 Compose：固定多架构清单摘要、强制实例独立密钥、
+  内嵌自签名 HTTPS 配置且不依赖宿主机文件或 Docker Socket。
 
 ## 生产环境仍需完成的验收
 
