@@ -316,6 +316,12 @@ services:
     image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.0@sha256:449c826588895579f6d00356849ed20422fffe5904139c9621ca22de76159131
     restart: unless-stopped
     user: "1002:1002"
+    environment:
+      # Caddy 在 scratch 镜像中没有 passwd/HOME；显式指定 XDG 路径，避免
+      # tls internal 尝试在只读根目录创建 /.local。
+      HOME: /config
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
     volumes:
       - ./data/gateway-data:/data
       - ./data/gateway-config/runtime:/config
@@ -428,6 +434,10 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 `gateway-init` 在 `./data/gateway-config/caddy/Caddyfile` 生成配置，`gateway` 以只读 bind
 挂载读取它。无需重建或重新拉取镜像，也不要删除 `./data/`；在 1Panel 保存后选择“重建”
 编排即可。
+
+如果 `gateway` 日志出现 `mkdir /.local: read-only file system`，说明仍在使用旧 Compose。
+新版为 Caddy 显式设置 `HOME=/config`、`XDG_CONFIG_HOME=/config` 和 `XDG_DATA_HOME=/data`，
+`tls internal` 生成的 CA 会保存到 `./data/gateway-data`，不会再写只读根目录。
 
 如果曾使用较早的 Compose，出现 `gateway-init didn't complete successfully: exit 1`，不要
 删除任何 `./data/` 目录。确认 `gateway-init` 的 `command` 与本文第三节完全一致，然后在

@@ -81,6 +81,10 @@ for compose_path in (
         raise SystemExit(f"{compose_path} must not declare top-level named volumes")
     if compose_path.name == "docker-compose.1panel.yml" and re.search(r"(?m)^configs:\s*$", text):
         raise SystemExit("1Panel Compose must use bind-mounted Caddyfile, not configs.content")
+    if compose_path.name in {"docker-compose.1panel.yml", "docker-compose.yml"}:
+        for caddy_path in ("HOME: /config", "XDG_CONFIG_HOME: /config", "XDG_DATA_HOME: /data"):
+            if caddy_path not in text:
+                raise SystemExit(f"{compose_path} must set Caddy writable XDG paths: {caddy_path}")
     named_mounts = [
         line for line in text.splitlines()
         if re.search(r"^\s*-\s+[A-Za-z0-9_.-]+:/", line)

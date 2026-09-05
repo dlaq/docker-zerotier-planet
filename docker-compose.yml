@@ -211,6 +211,12 @@ services:
     restart: unless-stopped
     network_mode: host
     user: "1002:1002"
+    environment:
+      # Caddy 在 scratch 镜像中没有 passwd/HOME；显式指定 XDG 路径，避免
+      # tls internal 尝试在只读根目录创建 /.local。
+      HOME: /config
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
     volumes:
       - /etc/ztplanet/generated/Caddyfile:/etc/caddy/Caddyfile:ro
       - /etc/ztplanet/tls:/etc/ztplanet/tls:ro
