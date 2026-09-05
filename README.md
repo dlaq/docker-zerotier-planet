@@ -33,28 +33,32 @@ PostgreSQL 为正式路径；强行改成 SQLite 会形成长期兼容分支。�
 公网绑定、HTTP、直接暴露 Controller API、任意来源 relay 都允许由用户选择，但界面会显示
 高风险警告、要求管理员重新输入密码，并记录安全审计事件。
 
-## Docker Hub 生产部署
+## 1Panel Compose 生产部署
 
-要求 Linux、Docker Engine、Docker Compose、systemd、iptables、Python 3.10+ 和 OpenSSL。
-GitHub 安全门禁通过后会把五个组件发布为同一 Docker Hub 仓库中的独立版本标签。生产机
-只拉取镜像，不需要本地编译：
+支持 Linux AMD64 和 ARM64。GitHub 安全门禁分别构建、扫描两种架构并生成 SBOM，全部
+通过后把五个组件发布为多架构 Docker Hub 标签。生产 VPS 只拉取镜像，不本地编译；
+容器由 1Panel 的“容器 → 编排”统一管理：
 
 ```bash
-sudo docker login --username DOCKERHUB_USERNAME
-sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.1
-sudo ./deploy.sh upgrade-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.1.0
-sudo ./deploy.sh backup
-sudo ./deploy.sh restore /var/backups/ztplanet/20260905T120000Z
+git clone --branch v1.1.0 --depth 1 \
+  https://github.com/dlaq/docker-zerotier-planet.git /srv/ztplanet-v1.1.0
+cd /srv/ztplanet-v1.1.0
+sudo ./scripts/prepare-1panel.sh v1.1.0 dlaq/zerotier-planet-test
 ```
 
-也保留 `sudo ./deploy.sh install` 本地固定源码构建模式，用于开发和独立审计。
+然后在 1Panel 新建名为 `ztplanet` 的编排，选择路径
+`/opt/ztplanet/docker-compose.yml`，设置 `ZTPLANET_RELEASE=v1.1.0` 并启动。
+数据库密码和认证密钥只保存在 root 所有的 `/etc/ztplanet/runtime.env`，不粘贴进
+1Panel Compose 文本。
+
+源码构建定义已独立放在 `docker-compose.build.yml`；正式 `docker-compose.yml` 不包含
+`build`，适合 1Panel 和普通 `docker compose pull/up`。本地审计构建使用 `./build.sh`。
 
 首次访问需信任自签名证书并注册管理员。之后进入
 `Admin → System & Exposure / 系统与暴露面` 完成运行配置。
 
-旧版 `myztplanet` 迁移会先停止并备份 `data/zerotier/one`。若新栈启动失败，安装器停止新栈
-并自动重启旧容器；旧容器和原目录不会删除。卸载默认保留数据，只有输入明确确认词的
-`purge-data` 才删除数据库、identity 和配置。
+旧版 `myztplanet` 迁移必须先停止并备份 `data/zerotier/one`，再导入
+`ztplanet_zerotier-data` 命名卷，最后由 1Panel 启动。旧容器和原目录在验收前不删除。
 
 生产机首次部署、SSH 安全访问、同机/跨机旧数据迁移以及旧 Planet 保留步骤见
 [docs/PRODUCTION-DEPLOYMENT.md](docs/PRODUCTION-DEPLOYMENT.md)。不要再次运行旧版本安装脚本，

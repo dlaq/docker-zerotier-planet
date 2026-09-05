@@ -1,6 +1,8 @@
 ARG NODEJS_IMAGE=node:24-alpine3.22@sha256:191c9f0080fcbbc6547a85dc0ff7988072214a355aabdc1d2ec55a7dae5eea8a
 ARG GOLANG_IMAGE=golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437
-FROM --platform=$BUILDPLATFORM $NODEJS_IMAGE AS base
+# Node/Prisma dependencies contain architecture-specific binaries.  Build this
+# stage for TARGETPLATFORM so the same Dockerfile produces a native arm64 image.
+FROM $NODEJS_IMAGE AS base
 RUN apk upgrade --no-cache
 
 # Install dependencies only when needed

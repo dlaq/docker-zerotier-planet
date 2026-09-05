@@ -1,112 +1,109 @@
-# 生产部署与旧版迁移
+# 1Panel 生产部署与旧版迁移
 
-本文适用于原项目的 `myztplanet` 容器和新版 ZTNet 拆分架构。不要再次运行旧版
-安装脚本：它的安装流程会先删除 `data/zerotier`。
+本文以 1Panel 的“容器 → 编排”作为容器生命周期入口，支持 Linux AMD64 和 ARM64。
+Compose 项目固定名为 `ztplanet`，五个镜像使用同一不可变版本标签。宿主机配置助手不
+挂载 Docker Socket，只处理经过校验的配置、证书、审计和受限 Compose 操作。
 
-## 一、发布到 Docker Hub
+不要再次运行旧项目安装脚本；旧脚本会删除原 `data/zerotier`。旧版
+`myztplanet/ztNCUI` 到本版属于迁移，不是普通镜像升级。
 
-GitHub 仓库必须配置以下 Actions Secret：
+## 一、发布模型与架构
 
-- `DOCKERHUB_USERNAME`：Docker Hub 用户名；
-- `DOCKERHUB_TOKEN`：Docker Hub Access Token，不是账户明文密码。
-
-再配置普通 Actions Variable：
-
-- `DOCKERHUB_REPOSITORY`：单个镜像仓库名；未配置时沿用旧工作流中的
-  `zerotier-planet-test`。
-
-Access Token 必须放在 **Secrets**，不能放在普通 Variables。若曾经以普通变量保存，
-应立即撤销旧 Token 并重新生成。如果准备改用正式名称，可先在 Docker Hub 创建新的
-私有仓库（例如 `zerotier-planet`），再把 `DOCKERHUB_REPOSITORY` 设置为该名称；Token
-权限应限制为目标仓库的读写权限。
-
-推送 `v*` Git 标签后，`.github/workflows/security.yml` 会依次执行源码测试、五个镜像
-构建、Medium/High/Critical 漏洞扫描和 SBOM 生成。只有全部通过才会登录 Docker Hub，
-发布以下五个标签：
+正式标签发布以下五个多架构镜像，每个标签必须同时包含 `linux/amd64` 和
+`linux/arm64`：
 
 ```text
-用户名/仓库:zerotier-v1.0.1
-用户名/仓库:ztnet-v1.0.1
-用户名/仓库:relay-v1.0.1
-用户名/仓库:postgres-v1.0.1
-用户名/仓库:gateway-v1.0.1
+dlaq/zerotier-planet-test:zerotier-v1.1.0
+dlaq/zerotier-planet-test:ztnet-v1.1.0
+dlaq/zerotier-planet-test:relay-v1.1.0
+dlaq/zerotier-planet-test:postgres-v1.1.0
+dlaq/zerotier-planet-test:gateway-v1.1.0
 ```
 
-也可以在 GitHub Actions 手动运行“安全门禁与 Docker Hub 发布”，勾选发布并填写版本。不要复用或
-覆盖旧版本标签。
+流水线分别构建并扫描 AMD64、ARM64 镜像，生成两套 SBOM；两种架构全部通过后才发布
+多架构标签。生产机执行 `uname -m`，支持 `x86_64`、`aarch64` 或 `arm64`。
 
-当前流水线只发布 Linux AMD64 镜像。生产机可用 `uname -m` 检查架构；输出应为
-`x86_64`。ARM64 主机必须先扩展并验证多架构构建，不能直接使用本版镜像。
+Docker Hub 凭据只能存入 GitHub Actions Secrets：
 
-## 二、生产机从 Docker Hub 安装
+- `DOCKERHUB_USERNAME`：Docker Hub 用户名；
+- `DOCKERHUB_TOKEN`：仅有目标仓库读写权限的 Access Token；
+- `DOCKERHUB_REPOSITORY`：普通 Actions Variable，默认 `zerotier-planet-test`。
 
-生产机仍需取得相同 Git 标签中的部署脚本和 Compose 文件，但不会在生产机编译镜像。
-若 Docker Hub 仓库是私有的，先交互式登录，提示输入密码时粘贴 Access Token：
+## 二、全新 ARM64/AMD64 VPS 准备
+
+确认 1Panel 已安装并已启动 Docker：
 
 ```bash
-sudo docker login --username DOCKERHUB_USERNAME
+uname -m
+docker version
+docker compose version
+test -c /dev/net/tun
 ```
 
-然后安装：
+Docker Compose 必须为 `2.24.4` 或更高版本，以支持安全替换端口列表。克隆与镜像版本
+相同的源码标签：
 
 ```bash
-git clone --branch v1.0.1 --depth 1 \
+sudo git clone --branch v1.1.0 --depth 1 \
   https://github.com/dlaq/docker-zerotier-planet.git \
-  /srv/ztplanet-v1.0.1
+  /srv/ztplanet-v1.1.0
 
-cd /srv/ztplanet-v1.0.1
-sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.1
+cd /srv/ztplanet-v1.1.0
+sudo ./scripts/prepare-1panel.sh v1.1.0 dlaq/zerotier-planet-test
 ```
 
-安装器会把精确镜像引用写入 `/etc/ztplanet/images.env`，拉取包括默认关闭的 TCP 中继
-在内的五个镜像，并使用 `--no-build` 启动。数据库和登录密钥随机生成在
-`/etc/ztplanet/runtime.env`，不会从 Docker Hub 或 GitHub 下发。
+准备程序只完成以下工作，不启动业务容器：
 
-检查状态：
+- 将当前发行文件安装到 `/opt/ztplanet`；
+- 在 `/etc/ztplanet/runtime.env` 生成数据库密码和 NextAuth 密钥；
+- 生成自签名证书、默认 Caddy 配置和 Compose override；
+- 安装不接触 Docker Socket 的受限配置助手；
+- 写入精确的 Docker Hub 镜像引用。
+
+不要把 `/etc/ztplanet/runtime.env`、`agent.secret`、证书私钥或 Controller 数据复制到
+1Panel 的 Compose 文本、截图、工单或聊天中。
+
+## 三、在 1Panel 创建编排
+
+进入 **容器 → 编排 → 创建编排**：
+
+1. 名称填写 `ztplanet`；
+2. 创建方式选择“路径选择”；
+3. Compose 路径选择 `/opt/ztplanet/docker-compose.yml`；
+4. 环境变量填写 `ZTPLANET_RELEASE=v1.1.0`；
+5. 确认后由 1Panel 拉取并启动。
+
+也可以将 Compose 内容粘贴进 1Panel，但路径选择更便于核对版本。不要删除 Compose 中
+的安全限制、固定项目名或绝对只读挂载。
+
+启动后检查：
 
 ```bash
-sudo /opt/ztplanet/scripts/manage.sh status
-sudo docker ps --filter name=ztplanet
-sudo cat /etc/ztplanet/images.env
+docker compose \
+  --project-directory /opt/ztplanet \
+  --env-file /etc/ztplanet/images.env \
+  -f /opt/ztplanet/docker-compose.yml ps
+docker ps --filter label=com.docker.compose.project=ztplanet
+sudo ss -lntup
 ```
 
-升级到新版本时，先确认新标签的流水线和五个镜像均已发布，再从新版本源码目录执行：
+默认只公开 ZeroTier `UDP/9993`。管理端为 `https://127.0.0.1:3443`，通过 SSH 隧道
+访问：
 
 ```bash
-sudo /srv/ztplanet-v1.1.0/deploy.sh \
-  upgrade-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.1.0
+ssh -N -L 3443:127.0.0.1:3443 管理用户@VPS公网IP
 ```
 
-升级会先备份数据库、Controller 身份、Planet 工作区、配置和旧发布文件；拉取或启动
-失败时自动尝试恢复旧发布与数据。
+浏览器打开 `https://127.0.0.1:3443`，接受预期的自签名证书警告。第一个注册用户成为
+管理员，随后注册自动关闭。
 
-## 三、首次安全访问
+云安全组只应默认放行可信来源的 SSH 和 `UDP/9993`。不要把 TCP/3443 对公网开放。
+启用 TCP fallback relay 后，只放行管理页面中选定的 TCP 端口。Docker 端口可能绕过
+部分 UFW/firewalld 规则，因此还应检查云安全组和 `DOCKER-USER` 链。
 
-默认管理端只监听 `https://127.0.0.1:3443`。在管理电脑建立 SSH 隧道：
+## 四、旧生产环境只读盘点
 
-```bash
-ssh -N -L 3443:127.0.0.1:3443 管理用户@生产机IP
-```
-
-浏览器打开 `https://127.0.0.1:3443`，确认并接受预期的自签名证书警告。第一个注册
-账户成为管理员，随后开放注册自动关闭。
-
-进入 **Admin -> System & Exposure（系统与暴露面）** 后：
-
-- 保留回环监听，或添加明确的局域网 IP；
-- 为两个可信内网填写准确 CIDR；
-- 保持自签名 HTTPS，或安装用户证书；
-- ZeroTier 接口出现后，按需开启虚拟网访问管理端；
-- 把 ZeroTier UDP 监听端口设置为旧生产端口；
-- Controller API 默认保持仅内部访问；
-- TCP fallback 默认关闭，需要时再配置独立端口、来源 CIDR 和限额。
-
-TCP/9993 不是 TCP fallback。公网通常只开放 ZeroTier UDP 端口；管理端优先通过 SSH、
-内网或 ZeroTier 访问。若启用 TCP 中继，只开放用户选定的中继 TCP 端口。
-
-## 四、迁移前只读盘点
-
-修改旧生产机前先执行：
+在任何停机或复制之前执行：
 
 ```bash
 docker inspect myztplanet \
@@ -114,94 +111,117 @@ docker inspect myztplanet \
 docker inspect myztplanet \
   --format 'image={{.Config.Image}} running={{.State.Running}}'
 docker port myztplanet
-sudo du -sh /旧仓库准确路径/data/zerotier
+docker ps --filter name=myztplanet
 ```
 
-必须确认 `/var/lib/zerotier-one` 的真实宿主机来源。原项目通常对应
-`旧仓库/data/zerotier/one`，但不能只根据容器名猜测。
+必须以第一条输出确认 `/var/lib/zerotier-one` 对应的真实宿主机目录。下文用
+`/旧仓库准确路径/data/zerotier` 作为占位符，不能未经核对直接照抄。
 
-## 五、制作独立旧版备份
-
-在维护窗口执行，并把占位路径改为盘点得到的准确路径：
+## 五、旧版维护窗口与离线备份
 
 ```bash
-legacy_repo=/旧仓库准确路径
-legacy_backup=/var/backups/ztplanet-legacy/迁移前备份
+legacy_data=/旧仓库准确路径/data/zerotier
+legacy_backup=/var/backups/ztplanet-legacy/before-v1.1.0
 
 sudo install -d -m 0700 "$legacy_backup"
-docker stop --time 30 myztplanet
-sudo tar --numeric-owner -C "$legacy_repo/data/zerotier" -czf "$legacy_backup/one.tar.gz" one
-sudo tar --numeric-owner -C "$legacy_repo/data/zerotier" -czf "$legacy_backup/dist.tar.gz" dist
-sudo tar --numeric-owner -C "$legacy_repo/data/zerotier" -czf "$legacy_backup/config.tar.gz" config
-sudo tar --numeric-owner -C "$legacy_repo/data/zerotier" -czf "$legacy_backup/ztncui.tar.gz" ztncui
-(cd "$legacy_backup" && sudo sha256sum one.tar.gz dist.tar.gz config.tar.gz ztncui.tar.gz | sudo tee SHA256SUMS)
+sudo docker stop --time 30 myztplanet
+sudo tar --numeric-owner -C "$legacy_data" -czf "$legacy_backup/one.tar.gz" one
+
+for item in dist config ztncui; do
+  if sudo test -e "$legacy_data/$item"; then
+    sudo tar --numeric-owner -C "$legacy_data" \
+      -czf "$legacy_backup/$item.tar.gz" "$item"
+  fi
+done
+
+(cd "$legacy_backup" && sudo sha256sum ./*.tar.gz | sudo tee SHA256SUMS)
 (cd "$legacy_backup" && sudo sha256sum -c SHA256SUMS)
-docker start myztplanet
 ```
 
-另存一份离线副本。`one.tar.gz` 包含 Controller 身份、Token、网络和成员配置；
-`dist.tar.gz` 包含客户端正在使用的 Planet/Moon。这两类备份都按密钥材料保护。
+`one.tar.gz` 包含 Controller 身份、Token、网络和成员配置；`dist.tar.gz` 包含客户端
+当前使用的 Planet/Moon。它们都属于密钥数据，必须再保存一份离线副本。
 
-## 六、同机迁移
+## 六、在旧 VPS 原机迁移到 1Panel Compose
 
-新版放在不同目录，不覆盖旧仓库。将旧 Controller 状态复制到新版源码目录，安装器会
-识别并导入：
+旧容器保持停止。完成第二、三节的发行准备，但暂时不要在 1Panel 启动编排，然后导入
+Controller 状态：
 
 ```bash
-new_release=/srv/ztplanet-v1.0.1
-legacy_repo=/旧仓库准确路径
-
-sudo install -d -m 0750 "$new_release/data/zerotier"
-sudo cp -a "$legacy_repo/data/zerotier/one" "$new_release/data/zerotier/one"
-cd "$new_release"
-sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.1
+sudo docker volume create ztplanet_zerotier-data
+sudo docker run --rm \
+  -v ztplanet_zerotier-data:/target \
+  -v "$legacy_backup:/backup:ro" \
+  alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
+  sh -eu -c 'test -z "$(find /target -mindepth 1 -print -quit)"; tar -C /target --strip-components=1 -xzf /backup/one.tar.gz'
 ```
 
-安装器会停止运行中的 `myztplanet`、额外制作时间戳备份、把数据导入
-`ztplanet_zerotier-data`，再启动新栈；失败时重新启动旧容器。旧仓库和旧容器不会删除。
-
-旧 ztncui 用户和密码不会导入。注册新的强管理员后，进入
-**Admin -> Controller -> Unlinked networks**，把原 Controller 中的网络分配给新管理员。
-网络 ID、成员授权、路由、地址池和 Flow Rules 保存在 Controller 数据中，会随
-`controller.d` 保留。
-
-验证期间可把原 Planet 原样复制到 ZTNet 独立工作区：
+如果备份中存在 `dist.tar.gz`，还应保留客户端当前使用的 Planet：
 
 ```bash
-legacy_dist=/旧仓库准确路径/data/zerotier/dist
+sudo docker volume create ztplanet_ztnet-planet
 sudo docker run --rm \
   -v ztplanet_ztnet-planet:/target \
-  -v "$legacy_dist:/legacy:ro" \
+  -v "$legacy_backup:/backup:ro" \
   alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
-  sh -eu -c 'mkdir -p /target/zt-mkworld; cp /legacy/planet /target/zt-mkworld/planet.custom; cp /legacy/planet /target/planet; chown -R 1001:1001 /target; chmod -R u=rwX,g=rX,o= /target'
+  sh -eu -c 'mkdir -p /tmp/legacy /target/zt-mkworld; tar -C /tmp/legacy -xzf /backup/dist.tar.gz; cp /tmp/legacy/dist/planet /target/planet; cp /tmp/legacy/dist/planet /target/zt-mkworld/planet.custom; chown -R 1001:1001 /target; chmod -R u=rwX,g=rX,o= /target'
 ```
 
-旧 `.moon` 文件继续保存在备份中，只通过 SSH/SCP 等认证渠道分发，不得恢复旧匿名
-文件服务器和查询字符串 Key。
+再由 1Panel 启动 `ztplanet` 编排。如果启动失败，在 1Panel 停止新版编排，然后恢复：
 
-如果公网 IP、UDP 端口和导入身份都不变，现有客户端可继续使用旧 Planet。若公网 IP
-或端口改变，必须重新生成并分发 Planet/Moon。
+```bash
+sudo docker start myztplanet
+```
 
-## 七、跨机迁移
+旧容器和旧数据目录在验收完成前不得删除。
 
-通过 SCP/SFTP 把已校验的旧版备份传到新服务器。`one.tar.gz` 已包含顶层 `one` 目录，
-应解压到新版源码的 `data/zerotier` 下，再执行 Docker Hub 安装。安装完成后按同机步骤
-复制旧 Planet。
+## 七、迁移到另一台 ARM64 VPS
 
-旧、新服务器绝不能同时运行同一份 ZeroTier 私有身份。启动新 Controller 前必须停止
-旧容器。新服务器公网地址不同时，应预先安排客户端 Planet 替换和回滚窗口。
+在旧机完成第五节并保持 `myztplanet` 停止，通过 SCP/SFTP 将整个校验过的备份目录传到
+新机，例如 `/var/backups/ztplanet-legacy/before-v1.1.0`。在新机先验证：
 
-## 八、切换前验收
+```bash
+cd /var/backups/ztplanet-legacy/before-v1.1.0
+sudo sha256sum -c SHA256SUMS
+```
+
+然后完成第二节的准备、创建 `ztplanet_zerotier-data` 并按第六节导入，最后由 1Panel
+创建并启动编排。
+
+旧、新 Controller 绝不能同时运行同一份 ZeroTier 私有身份。如果新 VPS 的公网 IP 或
+ZeroTier UDP 端口改变，必须重新生成并向客户端分发 Planet/Moon；公网 IP、端口和身份
+完全保持时，现有客户端才可能继续无感使用原 Planet。
+
+## 八、ZTNCUI 到 ZTNet 的数据边界
+
+旧 ztNCUI 用户名和密码不会迁移。首次进入新版后注册强管理员，再进入
+**Admin → Controller → Unlinked networks**，把旧网络分配给新管理员。
+
+Controller 的网络 ID、成员、授权状态、路由、地址池和 Flow Rules 位于 `controller.d`，
+随 `one` 数据迁移。不要恢复旧匿名文件服务器或查询字符串下载 Key。
+
+## 九、以后升级新版 Compose
+
+本节只适用于已经运行本项目 ZTNet 分离栈的服务器，不适用于旧 `myztplanet`。
+
+1. 在管理机执行 `/opt/ztplanet/scripts/manage.sh backup`；
+2. 确认目标版本五个多架构标签和安全流水线已成功；
+3. 克隆目标 Git 标签到新目录；
+4. 执行新版本的 `prepare-1panel.sh`，它保留 `/etc/ztplanet` 和命名卷；
+5. 在 1Panel 编辑编排，将 `ZTPLANET_RELEASE` 改为目标版本；
+6. 点击“拉取/重建”并检查全部容器健康状态。
+
+不要使用 `latest`，也不要只更新其中一个组件。回滚时恢复升级前备份并将五个镜像一起
+改回原版本。
+
+## 十、验收
 
 ```bash
 sudo /opt/ztplanet/scripts/manage.sh status
 sudo /opt/ztplanet/scripts/manage.sh backup
-sudo docker ps --filter name=ztplanet
+docker ps --filter label=com.docker.compose.project=ztplanet
 sudo ss -lntup
 ```
 
-核对旧网络 ID、路由、地址池、规则、成员和授权状态。先用一台可丢弃客户端测试旧
-Planet，再执行安全审计报告中的 `DIRECT`、UDP `RELAY`、TCP `TUNNELED` 和关闭
-fallback 矩阵。
-
-验收成功后才让旧容器保持停止。至少经过一个正常备份周期后，再考虑清理旧环境。
+核对旧网络 ID、路由、地址池、规则、成员和授权状态。至少使用一台可丢弃客户端验证
+`DIRECT`、UDP `RELAY`、TCP `TUNNELED` 和关闭 fallback 的故障矩阵。验收成功后让旧
+容器继续保持停止，至少经过一个正常备份周期后再考虑清理。

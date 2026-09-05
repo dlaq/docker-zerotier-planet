@@ -931,9 +931,8 @@ def render_compose_override(config: dict[str, Any]) -> str:
     lines = [
         "services:",
         "  zerotier:",
+        "    ports: !override",
     ]
-    if zt["enabled"] or controller["exposure"] == "direct":
-        lines.append("    ports:")
     if zt["enabled"]:
         zt_host = compose_host(zt["bindAddress"])
         lines.append(f"      - \"{zt_host}:{zt['publicPort']}:9993/udp\"")
@@ -943,6 +942,8 @@ def render_compose_override(config: dict[str, Any]) -> str:
             lines.append(f"      - \"{zt_host}:{zt['tertiaryPort']}:{zt['tertiaryPort']}/udp\"")
     if controller["exposure"] == "direct":
         lines.append(f"      - \"{compose_host(controller['bindAddress'])}:{controller['port']}:9993/tcp\"")
+    if not zt["enabled"] and controller["exposure"] != "direct":
+        lines[-1] = "    ports: !override []"
     lines.extend([
         "    volumes:",
         "      - /etc/ztplanet/generated/local.conf:/var/lib/zerotier-one/local.conf:ro",
@@ -951,7 +952,7 @@ def render_compose_override(config: dict[str, Any]) -> str:
         "      - /etc/ztplanet/generated/Caddyfile:/etc/caddy/Caddyfile:ro",
         "      - /etc/ztplanet/tls:/etc/ztplanet/tls:ro",
         "  relay:",
-        "    ports:",
+        "    ports: !override",
         f"      - \"{compose_host(config['relayServer']['bindAddress'])}:{config['relayServer']['port']}:4443/tcp\"",
     ])
     return "\n".join(lines) + "\n"
@@ -1143,6 +1144,8 @@ def run() -> None:
         gateway_gid=args.gateway_gid,
     )
     if args.initialize_only:
+        # Re-render an existing configuration when release templates change.
+        agent.render(agent.envelope()["config"])
         if not (agent.state_dir / "tls" / "self-signed.crt").exists():
             agent.generate_certificate(["localhost", "127.0.0.1"], "installer")
         return

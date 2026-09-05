@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: ztplanet-postgres:17
+    build:
+      context: services/postgres
+
+  zerotier:
+    image: ztplanet-zerotier:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ZEROTIER_VERSION: "1.16.2"
+        ZEROTIER_COMMIT: fc5c3ec22090b5b2a0f274e863651fe9ca489bf4
+
+  ztnet:
+    image: ztplanet-ztnet:latest
+    build:
+      context: services/ztnet
+      args:
+        NEXT_PUBLIC_APP_VERSION: ztplanet-1.1.0-ztnet-19206f20
+
+  gateway:
+    image: ztplanet-gateway:2.11.4
+    build:
+      context: services/gateway
+
+  relay:
+    image: ztplanet-relay:latest
+    build:
+      context: services/relay

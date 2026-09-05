@@ -78,7 +78,8 @@ if [ "$container_gate" = true ]; then
         docker compose config --quiet
     POSTGRES_PASSWORD="$security_postgres_password" \
         NEXTAUTH_SECRET="$security_auth_secret" \
-        COMPOSE_PROFILES=relay docker compose build --pull
+        COMPOSE_PROFILES=relay docker compose \
+            -f docker-compose.yml -f docker-compose.build.yml build --pull
     mkdir -p "$repo_dir/audit/sbom"
     for image_id in \
         ztplanet-zerotier:latest \

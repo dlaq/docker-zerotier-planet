@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       release:
-        description: "不可变发布标签，例如 v1.0.1"
+        description: "不可变发布标签，例如 v1.1.0"
         required: false
         type: string
 
@@ -38,15 +38,27 @@ jobs:
   container-build:
     needs: source-gate
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
     env:
       POSTGRES_PASSWORD: ci-build-only-password
       NEXTAUTH_SECRET: ci-build-only-secret-0000000000000000000000000000
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: 构建全部镜像但暂不发布
-        run: COMPOSE_PROFILES=relay docker compose build --pull
+      - name: 构建 ${{ matrix.platform }} 全部镜像但暂不发布
+        env:
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+        run: COMPOSE_PROFILES=relay docker compose -f docker-compose.yml -f docker-compose.build.yml build --pull
       - name: 扫描仓库配置、依赖与密钥
+        if: matrix.arch == 'amd64'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -87,18 +99,26 @@ jobs:
           exit-code: "1"
       - name: 生成镜像 SBOM
         run: |
-          mkdir -p audit/sbom
-          trivy image --format spdx-json --output audit/sbom/zerotier.spdx.json ztplanet-zerotier:latest
-          trivy image --format spdx-json --output audit/sbom/ztnet.spdx.json ztplanet-ztnet:latest
-          trivy image --format spdx-json --output audit/sbom/relay.spdx.json ztplanet-relay:latest
-          trivy image --format spdx-json --output audit/sbom/postgres.spdx.json ztplanet-postgres:17
-          trivy image --format spdx-json --output audit/sbom/gateway.spdx.json ztplanet-gateway:2.11.4
+          mkdir -p audit/sbom/${{ matrix.arch }}
+          trivy image --format spdx-json --output audit/sbom/${{ matrix.arch }}/zerotier.spdx.json ztplanet-zerotier:latest
+          trivy image --format spdx-json --output audit/sbom/${{ matrix.arch }}/ztnet.spdx.json ztplanet-ztnet:latest
+          trivy image --format spdx-json --output audit/sbom/${{ matrix.arch }}/relay.spdx.json ztplanet-relay:latest
+          trivy image --format spdx-json --output audit/sbom/${{ matrix.arch }}/postgres.spdx.json ztplanet-postgres:17
+          trivy image --format spdx-json --output audit/sbom/${{ matrix.arch }}/gateway.spdx.json ztplanet-gateway:2.11.4
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: image-sboms
-          path: audit/sbom/*.spdx.json
+          name: image-sboms-${{ matrix.arch }}
+          path: audit/sbom/${{ matrix.arch }}/*.spdx.json
+
+  publish-multiarch:
+    needs: container-build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: 校验 Docker Hub 发布参数
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_REPOSITORY: ${{ vars.DOCKERHUB_REPOSITORY }}
@@ -122,7 +142,6 @@ jobs:
           echo "ZTPLANET_RELEASE=$release" >> "$GITHUB_ENV"
           echo "ZTPLANET_DOCKERHUB_REPOSITORY=$DOCKERHUB_USERNAME/$repository" >> "$GITHUB_ENV"
       - name: 登录 Docker Hub
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -130,25 +149,34 @@ jobs:
           test -n "$DOCKERHUB_USERNAME"
           test -n "$DOCKERHUB_TOKEN"
           printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
-      - name: 发布五个经过扫描的镜像
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+      - name: 发布五个 AMD64/ARM64 多架构镜像
         run: |
           set -eu
-          for mapping in \
-            "ztplanet-zerotier:latest zerotier" \
-            "ztplanet-ztnet:latest ztnet" \
-            "ztplanet-relay:latest relay" \
-            "ztplanet-postgres:17 postgres" \
-            "ztplanet-gateway:2.11.4 gateway"; do
-            source_image=${mapping%% *}
-            component=${mapping#* }
+          image_base="docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY"
+          common="--platform linux/amd64,linux/arm64 --pull --push --provenance=true --sbom=true"
+          docker buildx build $common -t "$image_base:zerotier-$ZTPLANET_RELEASE" -f Dockerfile .
+          docker buildx build $common -t "$image_base:ztnet-$ZTPLANET_RELEASE" \
+            --build-arg "NEXT_PUBLIC_APP_VERSION=ztplanet-${ZTPLANET_RELEASE#v}-ztnet-19206f20" \
+            -f services/ztnet/Dockerfile services/ztnet
+          docker buildx build $common -t "$image_base:relay-$ZTPLANET_RELEASE" -f services/relay/Dockerfile services/relay
+          docker buildx build $common -t "$image_base:postgres-$ZTPLANET_RELEASE" -f services/postgres/Dockerfile services/postgres
+          docker buildx build $common -t "$image_base:gateway-$ZTPLANET_RELEASE" -f services/gateway/Dockerfile services/gateway
+      - name: 验证每个标签包含两种生产架构
+        run: |
+          set -eu
+          for component in zerotier ztnet relay postgres gateway; do
             target="docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:$component-$ZTPLANET_RELEASE"
-            docker tag "$source_image" "$target"
-            docker push "$target"
+            manifest=$(docker buildx imagetools inspect "$target")
+            printf '%s\n' "$manifest" | grep -q 'Platform:.*linux/amd64'
+            printf '%s\n' "$manifest" | grep -q 'Platform:.*linux/arm64'
           done
+      - name: 生成 Compose 镜像变量
+        run: |
+          set -eu
           {
             echo "ZTPLANET_DEPLOY_MODE=pull"
             echo "ZTPLANET_IMAGE_RELEASE=$ZTPLANET_RELEASE"
+            echo "ZTPLANET_RELEASE=$ZTPLANET_RELEASE"
             echo "ZTPLANET_POSTGRES_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:postgres-$ZTPLANET_RELEASE"
             echo "ZTPLANET_ZEROTIER_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:zerotier-$ZTPLANET_RELEASE"
             echo "ZTPLANET_ZTNET_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:ztnet-$ZTPLANET_RELEASE"
@@ -156,10 +184,9 @@ jobs:
             echo "ZTPLANET_RELAY_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:relay-$ZTPLANET_RELEASE"
           } > dockerhub-images.env
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         with:
           name: dockerhub-images-${{ env.ZTPLANET_RELEASE }}
           path: dockerhub-images.env
       - name: 退出 Docker Hub
-        if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish))
+        if: always()
         run: docker logout docker.io || true

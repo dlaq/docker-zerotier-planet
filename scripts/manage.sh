@@ -88,7 +88,7 @@ configure_images() {
 deploy_images_and_start() {
     deploy_mode=$(sed -n 's/^ZTPLANET_DEPLOY_MODE=//p' "$image_env")
     case "$deploy_mode" in
-        local) COMPOSE_PROFILES=relay compose build --pull ;;
+        local) COMPOSE_PROFILES=relay compose -f "$install_dir/docker-compose.build.yml" build --pull ;;
         pull) COMPOSE_PROFILES=relay compose pull ;;
         *) echo "Invalid ZTPLANET_DEPLOY_MODE in $image_env" >&2; exit 1 ;;
     esac
@@ -98,7 +98,7 @@ deploy_images_and_start() {
 rebuild_local_images_for_rollback() {
     deploy_mode=$(sed -n 's/^ZTPLANET_DEPLOY_MODE=//p' "$image_env")
     if [ "$deploy_mode" = local ]; then
-        COMPOSE_PROFILES=relay compose build >/dev/null 2>&1 || true
+        COMPOSE_PROFILES=relay compose -f "$install_dir/docker-compose.build.yml" build >/dev/null 2>&1 || true
     fi
 }
 
@@ -126,6 +126,7 @@ initialize_secrets() {
             echo "POSTGRES_USER=ztnet"
             echo "POSTGRES_DB=ztnet"
             echo "POSTGRES_PASSWORD=$postgres_password"
+            echo "DATABASE_URL=postgresql://ztnet:$postgres_password@postgres:5432/ztnet?schema=public"
             echo "NEXTAUTH_SECRET=$auth_secret"
         } > "$runtime_env"
         chown root:root "$runtime_env"
