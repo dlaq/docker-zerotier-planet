@@ -92,10 +92,26 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown 0:0 /data /backups && chmod 0750 /data /backups && chown -R 1001:1001 /data /backups"]
+    command:
+      - |
+        chown 0:0 /data /backups
+        chmod 0750 /data /backups
+        chown -R 1001:1001 /data /backups
+        chown 0:1001 /controller
+        chmod 2750 /controller
+        for file in authtoken.secret identity.public planet; do
+          if [ -e "/controller/$${file}" ]; then
+            chown 0:1001 "/controller/$${file}"
+            chmod 0640 "/controller/$${file}"
+          fi
+        done
+    depends_on:
+      zerotier:
+        condition: service_healthy
     volumes:
       - ./data/ztnet-planet:/data
       - ./data/ztnet-backups:/backups
+      - ./data/zerotier:/controller
     network_mode: none
     read_only: true
     security_opt:

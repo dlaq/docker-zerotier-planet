@@ -47,12 +47,19 @@ gateway_init = (
 )
 if gateway_init not in compose:
     raise SystemExit("gateway-init must remain idempotent with only CAP_CHOWN")
-ztnet_init = (
-    'command: ["chown 0:0 /data /backups && chmod 0750 /data /backups '
-    '&& chown -R 1001:1001 /data /backups"]'
-)
-if ztnet_init not in compose:
-    raise SystemExit("ztnet-init must prepare both Planet and backup bind directories")
+for required in (
+    'chown 0:0 /data /backups',
+    'chmod 0750 /data /backups',
+    'chown -R 1001:1001 /data /backups',
+    'chown 0:1001 /controller',
+    'chmod 2750 /controller',
+    'chown 0:1001 "/controller/$${file}"',
+    'chmod 0640 "/controller/$${file}"',
+    'condition: service_healthy',
+    './data/zerotier:/controller',
+):
+    if required not in compose:
+        raise SystemExit(f"ztnet-init missing controller permission guard: {required}")
 healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/favicon.ico\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
 if healthcheck not in compose:
     raise SystemExit("ZTNet healthcheck must probe a static asset and accept HTTP 4xx responses")

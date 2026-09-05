@@ -64,7 +64,9 @@ openssl rand -hex 48
 复制本节稍后给出的整个 `yaml` 代码块，从第一行 `name: ztplanet` 复制到最后一行
 `subnet: 172.31.254.0/28`。不要只复制其中一个服务，也不要删除镜像摘要、安全限制、
 健康检查、bind 挂载或网络配置。Docker 会在编排目录下自动创建 `./data/` 子目录。
-不要为了排错执行 `chmod 777`；`ztnet-init` 和 `gateway-init` 会在启动时设置所需属主与权限。
+不要为了排错执行 `chmod 777`；`ztnet-init` 会在 ZeroTier 健康后把控制器目录设为
+`root:1001`、把 ZTNet 必需的 `authtoken.secret`、`identity.public` 和 `planet` 设为
+`root:1001/0640`，`gateway-init` 会设置网关目录权限。
 
 <!-- ZTPLANET-COMPOSE-BEGIN -->
 
@@ -172,10 +174,26 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown 0:0 /data /backups && chmod 0750 /data /backups && chown -R 1001:1001 /data /backups"]
+    command:
+      - |
+        chown 0:0 /data /backups
+        chmod 0750 /data /backups
+        chown -R 1001:1001 /data /backups
+        chown 0:1001 /controller
+        chmod 2750 /controller
+        for file in authtoken.secret identity.public planet; do
+          if [ -e "/controller/$${file}" ]; then
+            chown 0:1001 "/controller/$${file}"
+            chmod 0640 "/controller/$${file}"
+          fi
+        done
+    depends_on:
+      zerotier:
+        condition: service_healthy
     volumes:
       - ./data/ztnet-planet:/data
       - ./data/ztnet-backups:/backups
+      - ./data/zerotier:/controller
     network_mode: none
     read_only: true
     security_opt:
@@ -415,9 +433,10 @@ sudo docker inspect ztplanet-ztnet-1 \
   --format '{{json .Config.Healthcheck.Test}}'
 ```
 
-本 Compose 已包含 `ztnet-init`，它会在 `ztnet` 启动前把 `./data/ztnet-planet` 和
-`./data/ztnet-backups` 准备为 UID 1001。若使用旧 Compose 失败过，保留 `./data/` 目录并
-重新粘贴本文第三节完整内容后重建；不要手动删除 Planet 数据。
+本 Compose 已包含 `ztnet-init`，它会等待 ZeroTier 健康后，在 `ztnet` 启动前把
+`./data/ztnet-planet` 和 `./data/ztnet-backups` 准备为 UID 1001，并修正控制器密钥的
+共享读取权限。若使用旧 Compose 失败过，保留 `./data/` 目录并重新粘贴本文第三节完整
+内容后重建；不要手动删除 Planet 数据。
 
 健康检查访问镜像内的静态 `favicon.ico`，只验证进程是否已提供 HTTP 响应，不执行登录页或
 业务页面逻辑。5xx 或无法连接才会被判定为不健康。若重建后仍为 `unhealthy`，
