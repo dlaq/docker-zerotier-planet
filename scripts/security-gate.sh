@@ -78,6 +78,8 @@ if healthcheck not in compose:
     raise SystemExit("ZTNet healthcheck must probe a static asset and accept HTTP 4xx responses")
 if 'HOSTNAME: 0.0.0.0' not in compose:
     raise SystemExit("ZTNet must explicitly bind Next.js to all container interfaces")
+if compose.count('      - DAC_OVERRIDE\n      - CHOWN') != 2:
+    raise SystemExit("one-shot ztnet/gateway init containers must retain DAC_OVERRIDE and CHOWN")
 for compose_path in (
     root / "docker-compose.1panel.yml",
     root / "docker-compose.yml",

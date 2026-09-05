@@ -81,7 +81,8 @@ Docker Hub 正式标签的清单摘要与平台如下；这些摘要来自发布
 - Caddy 以 UID/GID 1002 只读运行。自签名 HTTPS 返回 HTTP/2、HSTS、nosniff、
   禁止 iframe、no-referrer 和限制性 Permissions-Policy，并移除 Server 头。
 - Compose 持久化存储均为编排目录下的 `./data/*` bind 挂载，不声明 Docker named volume；
-  `ztnet-init` 和 `gateway-init` 以最小 `CHOWN` capability 修正目录属主。ZTNet 只通过
+  `ztnet-init` 和 `gateway-init` 仅在无网络、一次性初始化容器中使用 `CHOWN` 与
+  `DAC_OVERRIDE` 修正可能被 UID 1001/1002 锁定的私有子目录，容器完成后立即退出。ZTNet 只通过
   `root:1001/0640` 读取 `authtoken.secret`、`identity.public` 和 `planet`，不会获得
   ZeroTier `identity.secret` 的读取权限。
 - TCP 中继以 UID/GID 65532、只读根文件系统、零 Capability、自定义 seccomp 和

@@ -88,7 +88,9 @@ chmod 600 .env
 `root:1001`、把 ZTNet 必需的 `authtoken.secret`、`identity.public` 和 `planet` 设为
 `root:1001/0640`。`gateway-init` 会生成 `./data/gateway-config/caddy/Caddyfile`，并把
 网关运行目录设为 UID/GID 1002；gateway 以只读 bind 挂载读取 Caddyfile。这样兼容不支持
-`configs.content` 的 1Panel 版本，也不会让运行中的网关写入 Caddyfile。
+`configs.content` 的 1Panel 版本，也不会让运行中的网关写入 Caddyfile。两个初始化容器为
+了修复旧版本留下的 0700 私有子目录，会临时使用 `CHOWN` 和 `DAC_OVERRIDE` capability；
+它们没有网络、没有 Docker Socket，完成后立即退出。
 
 <!-- ZTPLANET-COMPOSE-BEGIN -->
 
@@ -236,6 +238,9 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      # 递归修复可能由旧版 UID 创建的私有目录；初始化容器无网络且不挂载
+      # Docker Socket，运行完成后立即退出。
+      - DAC_OVERRIDE
       - CHOWN
     pids_limit: 128
     mem_limit: 128m
@@ -385,6 +390,9 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      # 递归修复 Caddy 之前创建的 0700 子目录需要先穿过其权限；该
+      # capability 只存在于 network_mode:none 的一次性初始化容器中。
+      - DAC_OVERRIDE
       - CHOWN
 
   gateway:

@@ -141,6 +141,9 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      # 递归修复可能由旧版 UID 创建的私有目录；初始化容器无网络且不挂载
+      # Docker Socket，运行完成后立即退出。
+      - DAC_OVERRIDE
       - CHOWN
     pids_limit: 128
     mem_limit: 128m
@@ -290,6 +293,9 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      # 递归修复 Caddy 之前创建的 0700 子目录需要先穿过其权限；该
+      # capability 只存在于 network_mode:none 的一次性初始化容器中。
+      - DAC_OVERRIDE
       - CHOWN
 
   gateway:
