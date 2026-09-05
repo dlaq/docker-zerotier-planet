@@ -15,6 +15,9 @@ name: ztplanet
 # ./data/gateway-config/caddy，并由 gateway 以只读 bind 挂载加载。
 # 开放 relay：增加 COMPOSE_PROFILES=relay、RELAY_BIND_ADDRESS、RELAY_PUBLIC_PORT 和
 # RELAY_ALLOWED_CIDRS；外层不是真 TLS，留空 CIDR 表示允许任何来源。
+# MANAGEMENT_HOST 可以留空或设置为 0.0.0.0。两种值都会生成“全部 Host”入口，
+# 并用 localhost 的内部自签名证书作为 TLS 回退；浏览器访问动态公网 IP 时会出现
+# 自签名/名称不匹配提示，确认后即可使用。设置为域名或固定 IP 时只匹配该名称。
 
 services:
   postgres:
@@ -197,6 +200,10 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      # 保留空字符串；由 gateway-init 在容器内判断空值和 0.0.0.0，避免 Compose
+      # 的默认值把动态公网 IP 错误地固定成 localhost。
+      MANAGEMENT_HOST: "${MANAGEMENT_HOST-}"
     command:
       - |
         umask 027
@@ -204,13 +211,20 @@ services:
         chmod 0700 /data /config
         chmod 0750 /caddy
         if [ -L /caddy/Caddyfile ]; then rm -f /caddy/Caddyfile; fi
-        cat > /caddy/Caddyfile <<'EOF'
+        management_host="$${MANAGEMENT_HOST:-}"
+        case "$${management_host}" in
+          ""|0.0.0.0)
+            # 空主机名的 HTTPS 监听没有证书主题。先为 localhost 生成内部证书，作为
+            # SNI 回退；第二个站点块接受当前动态公网 IP 或其他 Host。
+            cat > /caddy/Caddyfile <<'EOF'
         {
           admin off
           auto_https disable_redirects
+          default_sni localhost
+          fallback_sni localhost
         }
 
-        https://${MANAGEMENT_HOST:-localhost}:3443 {
+        (management) {
           tls internal
           header {
             -Server
@@ -222,7 +236,46 @@ services:
           }
           reverse_proxy ztnet:3000
         }
+
+        https://localhost:3443 {
+          import management
+        }
+
+        https://:3443 {
+          import management
+        }
         EOF
+            ;;
+          *[!A-Za-z0-9._:-]*)
+            echo "MANAGEMENT_HOST 只能包含字母、数字、点、短横线、下划线、冒号" >&2
+            exit 1
+            ;;
+          *)
+            cat > /caddy/Caddyfile <<EOF
+        {
+          admin off
+          auto_https disable_redirects
+        }
+
+        (management) {
+          tls internal
+          header {
+            -Server
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "no-referrer"
+            Permissions-Policy "camera=(), microphone=(), geolocation=()"
+            Strict-Transport-Security "max-age=31536000"
+          }
+          reverse_proxy ztnet:3000
+        }
+
+        https://$${management_host}:3443 {
+          import management
+        }
+        EOF
+            ;;
+        esac
         chown -R 1002:1002 /data /config
         chown 0:1002 /caddy /caddy/Caddyfile
         chmod 0640 /caddy/Caddyfile

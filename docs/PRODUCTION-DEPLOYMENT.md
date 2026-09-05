@@ -72,10 +72,12 @@ chmod 600 .env
 标准 Docker Compose 会自动读取同目录 `.env`。1Panel 的“粘贴 Compose 内容”模式是否读取
 该文件取决于 1Panel 版本；如果它不读取，就在环境变量区域填入 `.env` 中的相同键值。
 两处同时存在同名变量时，以 1Panel 实际传给 Compose 的值为准；不要让两处值不一致。
-动态公网 IP 不需要填写 `MANAGEMENT_HOST`：省略该变量或保留 `localhost`，通过 SSH 隧道访问。
-如果必须直接从公网访问，请使用一个稳定的动态 DNS 名称作为 `MANAGEMENT_HOST`；不要把
-`0.0.0.0` 当作浏览器访问地址。`MANAGEMENT_BIND_ADDRESS=0.0.0.0` 仍表示监听全部宿主机
-地址，会扩大公网暴露面，必须配合云防火墙限制来源。
+动态公网 IP 可以把 `MANAGEMENT_HOST` 留空，或明确设置为 `0.0.0.0`。新版 `gateway-init`
+会为这两种值生成一个接受全部 Host 的入口，并用 `localhost` 内部自签名证书作为 TLS 回退；
+访问 `https://VPS当前公网IP:3443` 时浏览器会提示自签名/名称不匹配，确认后即可使用。
+`0.0.0.0` 不是浏览器中的访问地址，只是“所有 Host/所有本机地址”的配置值。需要无提示访问
+时仍建议使用稳定的动态 DNS 名称作为 `MANAGEMENT_HOST`。`MANAGEMENT_BIND_ADDRESS=0.0.0.0`
+表示监听全部宿主机地址，会扩大公网暴露面，必须配合云防火墙限制来源。
 
 ## 三、完整 Compose 内容
 
@@ -108,6 +110,9 @@ name: ztplanet
 # ./data/gateway-config/caddy，并由 gateway 以只读 bind 挂载加载。
 # 开放 relay：增加 COMPOSE_PROFILES=relay、RELAY_BIND_ADDRESS、RELAY_PUBLIC_PORT 和
 # RELAY_ALLOWED_CIDRS；外层不是真 TLS，留空 CIDR 表示允许任何来源。
+# MANAGEMENT_HOST 可以留空或设置为 0.0.0.0。两种值都会生成“全部 Host”入口，
+# 并用 localhost 的内部自签名证书作为 TLS 回退；浏览器访问动态公网 IP 时会出现
+# 自签名/名称不匹配提示，确认后即可使用。设置为域名或固定 IP 时只匹配该名称。
 
 services:
   postgres:
@@ -290,6 +295,10 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      # 保留空字符串；由 gateway-init 在容器内判断空值和 0.0.0.0，避免 Compose
+      # 的默认值把动态公网 IP 错误地固定成 localhost。
+      MANAGEMENT_HOST: "${MANAGEMENT_HOST-}"
     command:
       - |
         umask 027
@@ -297,13 +306,20 @@ services:
         chmod 0700 /data /config
         chmod 0750 /caddy
         if [ -L /caddy/Caddyfile ]; then rm -f /caddy/Caddyfile; fi
-        cat > /caddy/Caddyfile <<'EOF'
+        management_host="$${MANAGEMENT_HOST:-}"
+        case "$${management_host}" in
+          ""|0.0.0.0)
+            # 空主机名的 HTTPS 监听没有证书主题。先为 localhost 生成内部证书，作为
+            # SNI 回退；第二个站点块接受当前动态公网 IP 或其他 Host。
+            cat > /caddy/Caddyfile <<'EOF'
         {
           admin off
           auto_https disable_redirects
+          default_sni localhost
+          fallback_sni localhost
         }
 
-        https://${MANAGEMENT_HOST:-localhost}:3443 {
+        (management) {
           tls internal
           header {
             -Server
@@ -315,7 +331,46 @@ services:
           }
           reverse_proxy ztnet:3000
         }
+
+        https://localhost:3443 {
+          import management
+        }
+
+        https://:3443 {
+          import management
+        }
         EOF
+            ;;
+          *[!A-Za-z0-9._:-]*)
+            echo "MANAGEMENT_HOST 只能包含字母、数字、点、短横线、下划线、冒号" >&2
+            exit 1
+            ;;
+          *)
+            cat > /caddy/Caddyfile <<EOF
+        {
+          admin off
+          auto_https disable_redirects
+        }
+
+        (management) {
+          tls internal
+          header {
+            -Server
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "no-referrer"
+            Permissions-Policy "camera=(), microphone=(), geolocation=()"
+            Strict-Transport-Security "max-age=31536000"
+          }
+          reverse_proxy ztnet:3000
+        }
+
+        https://$${management_host}:3443 {
+          import management
+        }
+        EOF
+            ;;
+        esac
         chown -R 1002:1002 /data /config
         chown 0:1002 /caddy /caddy/Caddyfile
         chmod 0640 /caddy/Caddyfile
@@ -585,7 +640,7 @@ ss -lntup | grep 3443
 | 变量 | 默认值 | 作用 |
 |---|---|---|
 | `MANAGEMENT_BIND_ADDRESS` | `127.0.0.1` | 宿主机实际绑定地址 |
-| `MANAGEMENT_HOST` | `localhost` | HTTPS 证书名称和 ZTNet 标准访问地址 |
+| `MANAGEMENT_HOST` | `localhost` | HTTPS 证书名称和 ZTNet 标准访问地址；可留空或设为 `0.0.0.0` 以接受动态公网 Host |
 | `MANAGEMENT_PORT` | `3443` | 宿主机公开的管理端 TCP 端口 |
 
 例如只允许通过 VPS 的内网地址 `192.168.10.20` 访问：
@@ -598,6 +653,17 @@ MANAGEMENT_PORT=3443
 
 `MANAGEMENT_BIND_ADDRESS=0.0.0.0` 会包含公网、内网及可能存在的 ZeroTier 接口。Compose
 不会禁止部署者这样做，但必须同时使用云安全组限制来源，并明确承担公网管理面的风险。
+如果公网 IP 会变化，可以改用：
+
+```env
+MANAGEMENT_BIND_ADDRESS=0.0.0.0
+MANAGEMENT_HOST=0.0.0.0
+MANAGEMENT_PORT=3443
+```
+
+或者把 `MANAGEMENT_HOST` 留空。两种配置都会接受当前公网 IP；Caddy 使用 `localhost` 的
+内部自签名证书回退，因此浏览器需要确认证书警告。登录回调和邀请链接若要使用稳定地址，
+优先填写动态 DNS 名称，而不是使用 `0.0.0.0`。
 如果使用域名，把 `MANAGEMENT_HOST` 设置为该域名；本 Compose 默认仍使用内部自签名证书，
 不会自动申请公网 ACME 证书。
 
