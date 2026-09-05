@@ -37,21 +37,22 @@ jobs:
 
   container-build:
     needs: source-gate
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
+            runner: ubuntu-24.04
           - arch: arm64
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
     env:
       POSTGRES_PASSWORD: ci-build-only-password
       NEXTAUTH_SECRET: ci-build-only-secret-0000000000000000000000000000
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: 构建 ${{ matrix.platform }} 全部镜像但暂不发布
         env:
@@ -109,14 +110,65 @@ jobs:
         with:
           name: image-sboms-${{ matrix.arch }}
           path: audit/sbom/${{ matrix.arch }}/*.spdx.json
+      - name: 校验架构镜像发布参数
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_REPOSITORY: ${{ vars.DOCKERHUB_REPOSITORY }}
+          MANUAL_RELEASE: ${{ inputs.release }}
+        run: |
+          set -eu
+          repository=${DOCKERHUB_REPOSITORY:-zerotier-planet-test}
+          if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            release=$GITHUB_REF_NAME
+          else
+            release=$MANUAL_RELEASE
+          fi
+          case "$DOCKERHUB_USERNAME/$repository" in
+            *[!a-z0-9._/-]*|/*|*/|*//*|*/*/*) echo "Docker Hub namespace/repository 无效" >&2; exit 2 ;;
+            */*) ;;
+            *) echo "Docker Hub namespace/repository 无效" >&2; exit 2 ;;
+          esac
+          case "$release" in
+            ''|*[!A-Za-z0-9._-]*|-*|.*) echo "发布标签无效" >&2; exit 2 ;;
+          esac
+          echo "ZTPLANET_RELEASE=$release" >> "$GITHUB_ENV"
+          echo "ZTPLANET_DOCKERHUB_REPOSITORY=$DOCKERHUB_USERNAME/$repository" >> "$GITHUB_ENV"
+      - name: 登录 Docker Hub
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          test -n "$DOCKERHUB_USERNAME"
+          test -n "$DOCKERHUB_TOKEN"
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+      - name: 推送已扫描的 ${{ matrix.arch }} 架构镜像
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        run: |
+          set -eu
+          image_base="docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY"
+          for image in \
+            "zerotier=ztplanet-zerotier:latest" \
+            "ztnet=ztplanet-ztnet:latest" \
+            "relay=ztplanet-relay:latest" \
+            "postgres=ztplanet-postgres:17" \
+            "gateway=ztplanet-gateway:2.11.4"; do
+            component=${image%%=*}
+            source=${image#*=}
+            target="$image_base:$component-$ZTPLANET_RELEASE-${{ matrix.arch }}"
+            docker tag "$source" "$target"
+            docker push "$target"
+          done
+      - name: 退出 Docker Hub
+        if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish))
+        run: docker logout docker.io || true
 
   publish-multiarch:
     needs: container-build
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: 校验 Docker Hub 发布参数
         env:
@@ -149,18 +201,16 @@ jobs:
           test -n "$DOCKERHUB_USERNAME"
           test -n "$DOCKERHUB_TOKEN"
           printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
-      - name: 发布五个 AMD64/ARM64 多架构镜像
+      - name: 合成五个 AMD64/ARM64 正式多架构标签
         run: |
           set -eu
           image_base="docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY"
-          common="--platform linux/amd64,linux/arm64 --pull --push --provenance=true --sbom=true"
-          docker buildx build $common -t "$image_base:zerotier-$ZTPLANET_RELEASE" -f Dockerfile .
-          docker buildx build $common -t "$image_base:ztnet-$ZTPLANET_RELEASE" \
-            --build-arg "NEXT_PUBLIC_APP_VERSION=ztplanet-${ZTPLANET_RELEASE#v}-ztnet-19206f20" \
-            -f services/ztnet/Dockerfile services/ztnet
-          docker buildx build $common -t "$image_base:relay-$ZTPLANET_RELEASE" -f services/relay/Dockerfile services/relay
-          docker buildx build $common -t "$image_base:postgres-$ZTPLANET_RELEASE" -f services/postgres/Dockerfile services/postgres
-          docker buildx build $common -t "$image_base:gateway-$ZTPLANET_RELEASE" -f services/gateway/Dockerfile services/gateway
+          for component in zerotier ztnet relay postgres gateway; do
+            docker buildx imagetools create \
+              --tag "$image_base:$component-$ZTPLANET_RELEASE" \
+              "$image_base:$component-$ZTPLANET_RELEASE-amd64" \
+              "$image_base:$component-$ZTPLANET_RELEASE-arm64"
+          done
       - name: 验证每个标签包含两种生产架构
         run: |
           set -eu

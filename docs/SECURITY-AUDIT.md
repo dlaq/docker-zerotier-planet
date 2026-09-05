@@ -30,8 +30,8 @@
 | IaC/容器配置 | 通过：Trivy Medium/High/Critical 为 0 |
 | 源码与锁文件 | 通过：Trivy 漏洞和密钥扫描 Medium/High/Critical 为 0 |
 | Compose 模型 | 通过：变量插值及 `docker compose config --quiet` |
-| ARM64 构建定义 | 通过：Node/Prisma 运行层改为目标架构构建，基础镜像均提供 ARM64 清单 |
-| 多架构发布门禁 | 待 CI：AMD64/ARM64 分别构建扫描后才发布正式 manifest |
+| ARM64 构建定义 | 通过：Node/Prisma 运行层按目标架构构建，基础镜像均提供 ARM64 清单；CI 使用 GitHub 原生 ARM64 runner，避免 QEMU 执行 Node 原生模块 |
+| 多架构发布门禁 | 待 CI：AMD64/ARM64 在各自原生 runner 构建、扫描并推送架构标签，两边全部通过后才合成正式 manifest |
 | 配置代理 systemd 沙箱 | 通过：离线暴露评分 4.0/10，结果 `OK` |
 | 最终容器镜像 | 通过：五个镜像 Medium/High/Critical 均为 0 |
 | SPDX SBOM | 通过：五个最终镜像均已生成 |

@@ -20,8 +20,9 @@ dlaq/zerotier-planet-test:postgres-v1.1.0
 dlaq/zerotier-planet-test:gateway-v1.1.0
 ```
 
-流水线分别构建并扫描 AMD64、ARM64 镜像，生成两套 SBOM；两种架构全部通过后才发布
-多架构标签。生产机执行 `uname -m`，支持 `x86_64`、`aarch64` 或 `arm64`。
+流水线使用 AMD64、ARM64 原生 GitHub runner 分别构建并扫描镜像，生成两套 SBOM；每个
+架构标签对应通过扫描的本地镜像，两种架构全部成功后才合成正式多架构标签。生产机执行
+`uname -m`，支持 `x86_64`、`aarch64` 或 `arm64`。
 
 Docker Hub 凭据只能存入 GitHub Actions Secrets：
 
