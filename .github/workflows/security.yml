@@ -1,0 +1,165 @@
+name: 安全门禁与 Docker Hub 发布
+
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "安全门禁通过后发布到 Docker Hub"
+        required: true
+        type: boolean
+        default: false
+      release:
+        description: "不可变发布标签，例如 v1.0.0"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: services/ztnet/package-lock.json
+      - name: 安装固定版本 Rust 工具链
+        run: rustup toolchain install 1.85.1 --profile minimal --component rustfmt,clippy && rustup default 1.85.1
+      - name: 运行源码安全门禁
+        run: ./scripts/security-gate.sh
+
+  container-build:
+    needs: source-gate
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-build-only-password
+      NEXTAUTH_SECRET: ci-build-only-secret-0000000000000000000000000000
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: 构建全部镜像但暂不发布
+        run: COMPOSE_PROFILES=relay docker compose build --pull
+      - name: 扫描仓库配置、依赖与密钥
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          skip-dirs: services/ztnet/docs,services/ztnet/install.ztnet
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+      - name: 扫描 ZeroTier 镜像
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ztplanet-zerotier:latest
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+      - name: 扫描 ZTNet 镜像
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ztplanet-ztnet:latest
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+      - name: 扫描 TCP 中继镜像
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ztplanet-relay:latest
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+      - name: 扫描 PostgreSQL 镜像
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ztplanet-postgres:17
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+      - name: 扫描管理网关镜像
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ztplanet-gateway:2.11.4
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+      - name: 生成镜像 SBOM
+        run: |
+          mkdir -p audit/sbom
+          trivy image --format spdx-json --output audit/sbom/zerotier.spdx.json ztplanet-zerotier:latest
+          trivy image --format spdx-json --output audit/sbom/ztnet.spdx.json ztplanet-ztnet:latest
+          trivy image --format spdx-json --output audit/sbom/relay.spdx.json ztplanet-relay:latest
+          trivy image --format spdx-json --output audit/sbom/postgres.spdx.json ztplanet-postgres:17
+          trivy image --format spdx-json --output audit/sbom/gateway.spdx.json ztplanet-gateway:2.11.4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-sboms
+          path: audit/sbom/*.spdx.json
+      - name: 校验 Docker Hub 发布参数
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_REPOSITORY: ${{ vars.DOCKERHUB_REPOSITORY }}
+          MANUAL_RELEASE: ${{ inputs.release }}
+        run: |
+          set -eu
+          repository=${DOCKERHUB_REPOSITORY:-zerotier-planet-test}
+          if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            release=$GITHUB_REF_NAME
+          else
+            release=$MANUAL_RELEASE
+          fi
+          case "$DOCKERHUB_USERNAME/$repository" in
+            *[!a-z0-9._/-]*|/*|*/|*//*|*/*/*) echo "Docker Hub namespace/repository 无效" >&2; exit 2 ;;
+            */*) ;;
+            *) echo "Docker Hub namespace/repository 无效" >&2; exit 2 ;;
+          esac
+          case "$release" in
+            ''|*[!A-Za-z0-9._-]*|-*|.*) echo "发布标签无效" >&2; exit 2 ;;
+          esac
+          echo "ZTPLANET_RELEASE=$release" >> "$GITHUB_ENV"
+          echo "ZTPLANET_DOCKERHUB_REPOSITORY=$DOCKERHUB_USERNAME/$repository" >> "$GITHUB_ENV"
+      - name: 登录 Docker Hub
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+        run: |
+          test -n "$DOCKERHUB_USERNAME"
+          test -n "$DOCKERHUB_PASSWORD"
+          printf '%s' "$DOCKERHUB_PASSWORD" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+      - name: 发布五个经过扫描的镜像
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        run: |
+          set -eu
+          for mapping in \
+            "ztplanet-zerotier:latest zerotier" \
+            "ztplanet-ztnet:latest ztnet" \
+            "ztplanet-relay:latest relay" \
+            "ztplanet-postgres:17 postgres" \
+            "ztplanet-gateway:2.11.4 gateway"; do
+            source_image=${mapping%% *}
+            component=${mapping#* }
+            target="docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:$component-$ZTPLANET_RELEASE"
+            docker tag "$source_image" "$target"
+            docker push "$target"
+          done
+          {
+            echo "ZTPLANET_DEPLOY_MODE=pull"
+            echo "ZTPLANET_IMAGE_RELEASE=$ZTPLANET_RELEASE"
+            echo "ZTPLANET_POSTGRES_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:postgres-$ZTPLANET_RELEASE"
+            echo "ZTPLANET_ZEROTIER_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:zerotier-$ZTPLANET_RELEASE"
+            echo "ZTPLANET_ZTNET_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:ztnet-$ZTPLANET_RELEASE"
+            echo "ZTPLANET_GATEWAY_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:gateway-$ZTPLANET_RELEASE"
+            echo "ZTPLANET_RELAY_IMAGE=docker.io/$ZTPLANET_DOCKERHUB_REPOSITORY:relay-$ZTPLANET_RELEASE"
+          } > dockerhub-images.env
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        with:
+          name: dockerhub-images-${{ env.ZTPLANET_RELEASE }}
+          path: dockerhub-images.env
+      - name: 退出 Docker Hub
+        if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish))
+        run: docker logout docker.io || true

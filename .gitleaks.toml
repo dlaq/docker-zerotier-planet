@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated build, dependency and scanner output"
+paths = [
+  '''services/ztnet/\.next/''',
+  '''services/ztnet/node_modules/''',
+  '''services/relay/target/''',
+  '''audit/''',
+]

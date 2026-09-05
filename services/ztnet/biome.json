@@ -1,0 +1,55 @@
+{
+	"$schema": "https://biomejs.dev/schemas/1.4.0/schema.json",
+	"organizeImports": {
+		"enabled": false
+	},
+	"files": {
+		"ignore": [
+			"**/*.js",
+			"install.ztnet/**/*",
+			".devcontainer/**/*"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"formatWithErrors": false,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 90,
+		"ignore": [
+			"src/locales/**/*.json"
+		]
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"style": {
+				"useSelfClosingElements": "off",
+				"noNonNullAssertion": "off",
+				"useImportType": "off",
+				"useNumberNamespace": "off",
+				"useNodejsImportProtocol": "off"
+			},
+			"a11y": {
+				"noNoninteractiveTabindex": "off",
+				"useButtonType": "off",
+				"noSvgWithoutTitle": "off",
+				"useValidAnchor": "off",
+				"useKeyWithMouseEvents": "off",
+				"useKeyWithClickEvents": "off",
+				"useValidAriaRole": "off",
+				"noLabelWithoutControl": "off",
+				"useSemanticElements": "off"
+			},
+			"suspicious": {
+				"noCommentText": "warn",
+				"noConsoleLog": "error",
+				"noExplicitAny": "error"
+			},
+			"correctness": {
+				"noUnusedVariables": "error"
+			}
+		}
+	}
+}

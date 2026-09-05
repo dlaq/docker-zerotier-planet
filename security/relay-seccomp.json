@@ -1,0 +1,34 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": ["SCMP_ARCH_ARM"]
+    }
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "accept", "accept4", "access", "arch_prctl", "bind", "brk",
+        "clock_gettime", "clone", "clone3", "close", "connect", "dup",
+        "dup2", "dup3", "epoll_create1", "epoll_ctl", "epoll_pwait",
+        "epoll_wait", "execve", "exit", "exit_group", "fcntl", "fstat", "fstatfs",
+        "futex", "getdents64", "getpeername", "getpid", "getrandom", "getsockname",
+        "getsockopt", "gettid", "ioctl", "listen", "lseek", "madvise",
+        "mmap", "mprotect", "munmap", "newfstatat", "openat", "poll",
+        "ppoll", "prctl", "pread64", "prlimit64", "read", "readlink",
+        "readlinkat", "recvfrom", "recvmmsg", "recvmsg", "restart_syscall",
+        "rseq", "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sched_yield",
+        "sendmmsg", "sendmsg", "sendto", "set_robust_list", "set_tid_address",
+        "setsockopt", "shutdown", "sigaltstack", "socket", "statx", "uname",
+        "write", "writev"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}

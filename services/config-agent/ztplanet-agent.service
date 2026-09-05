@@ -1,0 +1,37 @@
+[Unit]
+Description=ZeroTier Planet restricted configuration agent
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/ztplanet/services/config-agent/ztplanet_agent.py --project-dir /opt/ztplanet --state-dir /etc/ztplanet --socket /run/ztplanet/agent.sock --socket-gid 1001 --gateway-gid 1002
+Restart=on-failure
+RestartSec=3
+UMask=0027
+RuntimeDirectory=ztplanet
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_NET_ADMIN
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ReadWritePaths=/etc/ztplanet /run/ztplanet
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,223 @@
+name: ztplanet
+
+services:
+  postgres:
+    image: ${ZTPLANET_POSTGRES_IMAGE:-ztplanet-postgres:17}
+    build:
+      context: services/postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ztnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in /etc/ztplanet/runtime.env}
+      POSTGRES_DB: ${POSTGRES_DB:-ztnet}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - password_encryption=scram-sha-256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      app-network:
+        ipv4_address: 172.31.255.4
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+
+  zerotier:
+    image: ${ZTPLANET_ZEROTIER_IMAGE:-ztplanet-zerotier:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ZEROTIER_VERSION: "1.16.2"
+        ZEROTIER_COMMIT: fc5c3ec22090b5b2a0f274e863651fe9ca489bf4
+    restart: unless-stopped
+    volumes:
+      - zerotier-data:/var/lib/zerotier-one
+    networks:
+      app-network:
+        ipv4_address: 172.31.255.2
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "zerotier-cli", "-D/var/lib/zerotier-one", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  ztnet:
+    image: ${ZTPLANET_ZTNET_IMAGE:-ztplanet-ztnet:latest}
+    build:
+      context: services/ztnet
+      args:
+        NEXT_PUBLIC_APP_VERSION: ztplanet-1.0.0-ztnet-19206f20
+    restart: unless-stopped
+    user: "1001:1001"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ztnet}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ztnet}?schema=public
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ztnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ztnet}
+      ZT_ADDR: http://zerotier:9993
+      ZT_SECRET_FILE: /run/zerotier-controller/authtoken.secret
+      ZT_IDENTITY_PUBLIC_FILE: /run/zerotier-controller/identity.public
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://127.0.0.1:3443}
+      NEXTAUTH_URL_INTERNAL: http://ztnet:3000
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in /etc/ztplanet/runtime.env}
+      NEXTAUTH_SESSION_MAX_AGE: ${NEXTAUTH_SESSION_MAX_AGE:-28800}
+      ZTPLANET_LOGIN_ATTEMPTS: ${ZTPLANET_LOGIN_ATTEMPTS:-5}
+      ZTPLANET_LOGIN_LOCKOUT_SECONDS: ${ZTPLANET_LOGIN_LOCKOUT_SECONDS:-900}
+      ZTPLANET_AGENT_SOCKET: /run/ztplanet/agent.sock
+      ZTPLANET_AGENT_SECRET_FILE: /run/ztplanet/agent.secret
+      NPM_CONFIG_CACHE: /tmp/npm-cache
+    volumes:
+      - zerotier-data:/run/zerotier-controller:ro
+      - ztnet-planet:/var/lib/zerotier-one
+      - ztnet-backups:/app/tmp/backups
+      - /run/ztplanet/agent.sock:/run/ztplanet/agent.sock
+      - /etc/ztplanet/agent.secret:/run/ztplanet/agent.secret:ro
+    ports:
+      - "127.0.0.1:3000:3000/tcp"
+    networks:
+      app-network:
+        ipv4_address: 172.31.255.3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      zerotier:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=1001,gid=1001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  gateway:
+    image: ${ZTPLANET_GATEWAY_IMAGE:-ztplanet-gateway:2.11.4}
+    build:
+      context: services/gateway
+    restart: unless-stopped
+    network_mode: host
+    user: "1002:1002"
+    volumes:
+      - /etc/ztplanet/generated/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/ztplanet/tls:/etc/ztplanet/tls:ro
+    depends_on:
+      - ztnet
+    read_only: true
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=16m,uid=1002,gid=1002
+      - /data:rw,noexec,nosuid,nodev,size=16m,uid=1002,gid=1002
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+  relay:
+    image: ${ZTPLANET_RELAY_IMAGE:-ztplanet-relay:latest}
+    profiles: ["relay"]
+    build:
+      context: services/relay
+    restart: unless-stopped
+    environment:
+      RELAY_LISTEN: 0.0.0.0:4443
+      RELAY_METRICS_LISTEN: 0.0.0.0:9090
+      RELAY_ALLOWED_CIDRS: ${RELAY_ALLOWED_CIDRS:-}
+      RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-128}
+      RELAY_MAX_CONNECTIONS_PER_IP: ${RELAY_MAX_CONNECTIONS_PER_IP:-4}
+      RELAY_PACKETS_PER_SECOND: ${RELAY_PACKETS_PER_SECOND:-200}
+      RELAY_BYTES_PER_SECOND: ${RELAY_BYTES_PER_SECOND:-2097152}
+      RELAY_GLOBAL_PACKETS_PER_SECOND: ${RELAY_GLOBAL_PACKETS_PER_SECOND:-2000}
+      RELAY_GLOBAL_BYTES_PER_SECOND: ${RELAY_GLOBAL_BYTES_PER_SECOND:-20971520}
+      RELAY_HANDSHAKE_TIMEOUT_SECONDS: ${RELAY_HANDSHAKE_TIMEOUT_SECONDS:-10}
+      RELAY_IDLE_TIMEOUT_SECONDS: ${RELAY_IDLE_TIMEOUT_SECONDS:-300}
+      RELAY_MAX_DESTINATIONS: ${RELAY_MAX_DESTINATIONS:-64}
+      RELAY_MIN_DESTINATION_PORT: ${RELAY_MIN_DESTINATION_PORT:-1025}
+    networks:
+      relay-egress:
+        ipv4_address: 172.31.254.2
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,uid=65532,gid=65532
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=/opt/ztplanet/security/relay-seccomp.json
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 256m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ztplanet-relay", "--healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  zerotier-data:
+  ztnet-planet:
+  postgres-data:
+  ztnet-backups:
+
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.255.0/24
+  relay-egress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.254.0/28

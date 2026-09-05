@@ -1,0 +1,37 @@
+ZeroTier Planet 安全验证摘要
+日期：2026-09-05
+
+源码门禁
+配置代理单元测试：通过 13/13
+TCP 中继单元测试：通过 6/6
+TCP 中继协议测试：通过 2/2
+TCP 中继 rustfmt：通过
+TCP 中继 Clippy 零警告：通过
+ZTNet 页面测试：通过 59/59（12 个套件）
+ZTNet API 测试：通过 352/352（35 个套件）
+ZTNet 生产构建：通过
+ZTNet npm audit：通过，0 项
+ztmkworld go test 和 go vet：通过
+Gitleaks：通过，0 个泄漏
+Trivy 配置 Medium/High/Critical：0
+Trivy 文件系统漏洞 Medium/High/Critical：0
+Trivy 文件系统密钥：0
+Docker Compose 配置：通过
+
+最终镜像门禁（Medium/High/Critical）
+ztplanet-zerotier:latest：0
+ztplanet-ztnet:latest：0
+ztplanet-gateway:2.11.4：0
+ztplanet-postgres:17：0
+ztplanet-relay:latest：0
+
+运行验证
+ZeroTier 1.16.2 自测试及隔离 Controller API：通过
+ZTNet 非 root/只读运行、登录和未授权访问检查：通过
+Caddy 自签名 HTTPS 和安全响应头：通过
+PostgreSQL 17.11 迁移、Seed 和连接：通过
+TCP 中继 seccomp、健康、指标和链路本地拒绝：通过
+
+限制
+本工作站未执行会主动中断网络的双客户端公网/NAT DIRECT、RELAY、TUNNELED 矩阵；
+该矩阵是正式部署前必须完成的环境验收。

@@ -1,0 +1,5 @@
+# DS-0002: zerotier-one must start with CAP_NET_ADMIN and root privileges to
+# create/configure its TUN interface. The service is separately constrained by
+# no-new-privileges, a read-only root filesystem, a minimal capability set,
+# resource limits, and no Docker socket. This exception applies to Dockerfile.
+DS-0002

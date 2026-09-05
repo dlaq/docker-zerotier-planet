@@ -1,0 +1,3 @@
+services/gateway/*.patch whitespace=-space-before-tab
+services/relay/Cargo.lock whitespace=-blank-at-eof
+services/relay/Cargo.toml whitespace=-blank-at-eof
