@@ -226,7 +226,8 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      # 使用镜像内的静态资源探测 HTTP 进程，避免根路径重定向或页面逻辑误报。
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/favicon.ico').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 20
@@ -407,7 +408,7 @@ sudo docker compose -p ztplanet up -d --force-recreate
 docker logs ztplanet-ztnet-1
 ```
 
-确认容器实际采用了新的健康检查（输出中应包含 `status<500`）：
+确认容器实际采用了新的健康检查（输出中应包含 `favicon.ico` 和 `status<500`）：
 
 ```bash
 sudo docker inspect ztplanet-ztnet-1 \
@@ -418,8 +419,8 @@ sudo docker inspect ztplanet-ztnet-1 \
 `./data/ztnet-backups` 准备为 UID 1001。若使用旧 Compose 失败过，保留 `./data/` 目录并
 重新粘贴本文第三节完整内容后重建；不要手动删除 Planet 数据。
 
-健康检查访问根路径只验证进程是否已提供 HTTP 响应；ZTNet 根路径没有业务页面，返回 404
-是合法状态，不代表服务故障。5xx 或无法连接才会被判定为不健康。若重建后仍为 `unhealthy`，
+健康检查访问镜像内的静态 `favicon.ico`，只验证进程是否已提供 HTTP 响应，不执行登录页或
+业务页面逻辑。5xx 或无法连接才会被判定为不健康。若重建后仍为 `unhealthy`，
 请同时提供健康检查输出和 `docker logs`，不要删除 `./data/`。
 
 如果这台机器曾使用本项目早期版本的 Docker named volume，不能直接切换 Compose 后期待

@@ -53,9 +53,9 @@ ztnet_init = (
 )
 if ztnet_init not in compose:
     raise SystemExit("ztnet-init must prepare both Planet and backup bind directories")
-healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
+healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/favicon.ico\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
 if healthcheck not in compose:
-    raise SystemExit("ZTNet healthcheck must accept legitimate HTTP 4xx responses")
+    raise SystemExit("ZTNet healthcheck must probe a static asset and accept HTTP 4xx responses")
 for compose_path in (
     root / "docker-compose.1panel.yml",
     root / "docker-compose.yml",
