@@ -165,6 +165,26 @@ services:
       retries: 12
       start_period: 20s
 
+  ztnet-init:
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown 0:0 /data && chmod 0750 /data && chown -R 1001:1001 /data"]
+    volumes:
+      - ztnet-planet:/data
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    pids_limit: 128
+    mem_limit: 128m
+    cpus: 0.25
+
   ztnet:
     image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
     restart: unless-stopped
@@ -193,6 +213,8 @@ services:
         condition: service_healthy
       zerotier:
         condition: service_healthy
+      ztnet-init:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=1001,gid=1001
@@ -360,6 +382,7 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 
 - `postgres`：健康；
 - `zerotier`：健康；
+- `ztnet-init`：正常退出，退出码 0；
 - `ztnet`：健康；
 - `gateway-init`：正常退出，退出码 0；
 - `gateway`：运行中；
@@ -371,6 +394,16 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 删除任何卷。确认 `gateway-init` 的 `command` 与本文第三节完全一致，然后在 1Panel 保存并
 “重建”编排。新命令会先临时取回顶层目录所有权、设置权限，再递归交给 UID 1002，因此既能
 修复已经失败过的卷，也能在以后重复执行。
+
+如果 `ztnet` 报 `unhealthy`，先查看实际应用日志：
+
+```bash
+docker logs ztplanet-ztnet-1
+```
+
+本 Compose 已包含 `ztnet-init`，它会在 `ztnet` 启动前把 `ztplanet_ztnet-planet` 卷准备为
+UID 1001。若使用旧 Compose 失败过，保留卷并重新粘贴本文第三节完整内容后重建；不要手动
+删除 Planet 卷。
 
 ## 五、默认访问方法
 

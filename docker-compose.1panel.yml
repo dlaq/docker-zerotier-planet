@@ -95,6 +95,26 @@ services:
       retries: 12
       start_period: 20s
 
+  ztnet-init:
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown 0:0 /data && chmod 0750 /data && chown -R 1001:1001 /data"]
+    volumes:
+      - ztnet-planet:/data
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    pids_limit: 128
+    mem_limit: 128m
+    cpus: 0.25
+
   ztnet:
     image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
     restart: unless-stopped
@@ -123,6 +143,8 @@ services:
         condition: service_healthy
       zerotier:
         condition: service_healthy
+      ztnet-init:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=1001,gid=1001
