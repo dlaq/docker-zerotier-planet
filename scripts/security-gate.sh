@@ -25,6 +25,23 @@ for file in build.sh deploy.sh scripts/*.sh services/zerotier/entrypoint.sh serv
 done
 python3 -m json.tool security/relay-seccomp.json >/dev/null
 
+# The production guide is intentionally a standalone deliverable. Fail the
+# release if its embedded Compose ever drifts from the validated source file.
+python3 - <<'PY'
+from pathlib import Path
+
+root = Path.cwd()
+document = (root / "docs/PRODUCTION-DEPLOYMENT.md").read_text(encoding="utf-8")
+compose = (root / "docker-compose.1panel.yml").read_text(encoding="utf-8").rstrip("\n")
+begin = "<!-- ZTPLANET-COMPOSE-BEGIN -->\n\n```yaml\n"
+end = "\n```\n\n<!-- ZTPLANET-COMPOSE-END -->"
+if document.count(begin) != 1 or document.count(end) != 1:
+    raise SystemExit("Production guide must contain exactly one embedded Compose block")
+embedded = document.split(begin, 1)[1].split(end, 1)[0]
+if embedded != compose:
+    raise SystemExit("Embedded production Compose differs from docker-compose.1panel.yml")
+PY
+
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     compose_db_password=ci-only-0123456789abcdef0123456789abcdef0123456789abcdef
     compose_auth_secret=ci-only-abcdef0123456789abcdef0123456789abcdef0123456789abcdef

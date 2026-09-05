@@ -35,9 +35,10 @@ PostgreSQL 为正式路径；强行改成 SQLite 会形成长期兼容分支。�
 
 ## 1Panel 只粘贴 Compose 部署
 
-交付给普通部署者的是 [`docker-compose.1panel.yml`](docker-compose.1panel.yml) 的完整
-文本，不是仓库根目录的 `docker-compose.yml`。部署者不需要 GitHub 源码、不需要运行
-项目脚本，也不需要创建 `/etc/ztplanet` 文件。
+对外只需交付 [`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md) 这一份中文
+文档。文档已经内嵌完整 Compose、秘密值生成、访问、备份、升级和新旧机迁移命令；部署者
+不需要访问本私有 GitHub 仓库、下载源码或索取其他文件。`docker-compose.1panel.yml` 是
+仓库内受门禁校验的同源副本，不是部署者必须取得的第二个交付物。
 
 在 VPS 终端生成两个不同的随机值：
 
@@ -63,11 +64,12 @@ ssh -N -L 3443:127.0.0.1:3443 管理用户@VPS公网IP
 浏览器访问 `https://localhost:3443`，接受本实例自签名证书并注册首个管理员。管理端默认
 仅绑定回环地址，ZeroTier 默认开放 `UDP/9993`，TCP fallback relay 默认关闭。
 
-旧版 `myztplanet` 必须先停止并备份其映射到 `/var/lib/zerotier-one` 的真实宿主机目录，
-再把备份导入 `ztplanet_zerotier-data` 命名卷。旧容器和原目录在验收前不得删除。
+旧版 `myztplanet` 必须先核验并停止，同时备份其映射到 `/var/lib/zerotier-one` 和
+`/app/dist` 的两个真实宿主机目录，再分别导入 Controller 与 Planet 命名卷。旧容器和原
+目录在验收前不得删除。
 
 只使用 Compose 的完整步骤、环境变量、内网/公网绑定、relay 开启方法及原机/跨机迁移命令
-见 [docs/PRODUCTION-DEPLOYMENT.md](docs/PRODUCTION-DEPLOYMENT.md)。文档不再假设部署者拥有源码。
+都在上述单一交付文档中，文档不假设部署者拥有源码。
 
 仓库根目录的 `docker-compose.yml` 只供需要受限宿主机配置代理的高级安装使用；它不能
 脱离源码和 `/etc/ztplanet` 单独粘贴。源码构建定义位于 `docker-compose.build.yml`。
