@@ -145,6 +145,8 @@ services:
       ZT_ADDR: http://zerotier:9993
       ZT_SECRET_FILE: /run/zerotier-controller/authtoken.secret
       ZT_IDENTITY_PUBLIC_FILE: /run/zerotier-controller/identity.public
+      # Next.js defaults to Docker's container-id HOSTNAME unless overridden.
+      HOSTNAME: 0.0.0.0
       NEXTAUTH_URL_INTERNAL: http://ztnet:3000
       ZTPLANET_AGENT_SOCKET: /run/ztplanet/agent.sock
       ZTPLANET_AGENT_SECRET_FILE: /run/ztplanet/agent.secret

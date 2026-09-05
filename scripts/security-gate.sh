@@ -67,6 +67,8 @@ for required in (
 healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/favicon.ico\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
 if healthcheck not in compose:
     raise SystemExit("ZTNet healthcheck must probe a static asset and accept HTTP 4xx responses")
+if 'HOSTNAME: 0.0.0.0' not in compose:
+    raise SystemExit("ZTNet must explicitly bind Next.js to all container interfaces")
 for compose_path in (
     root / "docker-compose.1panel.yml",
     root / "docker-compose.yml",

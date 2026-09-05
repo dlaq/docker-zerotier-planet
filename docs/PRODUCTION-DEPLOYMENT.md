@@ -224,6 +224,9 @@ services:
       ZT_ADDR: http://zerotier:9993
       ZT_SECRET_FILE: /run/zerotier-controller/authtoken.secret
       ZT_IDENTITY_PUBLIC_FILE: /run/zerotier-controller/identity.public
+      # Next.js 默认读取 Docker 注入的 HOSTNAME（容器 ID），会导致只监听容器地址；
+      # 显式监听所有容器接口，供本地健康检查和 gateway 访问。
+      HOSTNAME: 0.0.0.0
       NEXTAUTH_SESSION_MAX_AGE: "28800"
       ZTPLANET_LOGIN_ATTEMPTS: "5"
       ZTPLANET_LOGIN_LOCKOUT_SECONDS: "900"
