@@ -230,7 +230,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-      start_period: 30s
+      # ARM 首次启动可能要先完成 Prisma migration/seed，给应用足够预热时间。
+      start_period: 90s
 
   gateway-init:
     image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.0@sha256:6ea416f2fb99986e165f4930abdd28fe0c736def0c84e229513fcac8b6e1f401
@@ -390,10 +391,27 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 1Panel 保存并“重建”编排。新命令会先临时取回顶层目录所有权、设置权限，再递归交给 UID
 1002，因此既能修复已经失败过的目录，也能在以后重复执行。
 
-如果 `ztnet` 报 `unhealthy`，先查看实际应用日志：
+如果 `ztnet` 报 `unhealthy`，先确认 1Panel 是否真的重建了 `ztnet` 容器。仅点击“启动”可能
+会继续使用旧容器中的旧健康检查；请先停止编排，再使用“重建”。这只会重建容器和网络，
+不会删除 `./data/`。命令行等价操作如下（不要加 `-v`）：
+
+```bash
+cd "1Panel 显示的实际编排目录"
+sudo docker compose -p ztplanet down --remove-orphans
+sudo docker compose -p ztplanet up -d --force-recreate
+```
+
+重建后再查看实际应用日志：
 
 ```bash
 docker logs ztplanet-ztnet-1
+```
+
+确认容器实际采用了新的健康检查（输出中应包含 `status<500`）：
+
+```bash
+sudo docker inspect ztplanet-ztnet-1 \
+  --format '{{json .Config.Healthcheck.Test}}'
 ```
 
 本 Compose 已包含 `ztnet-init`，它会在 `ztnet` 启动前把 `./data/ztnet-planet` 和
@@ -401,7 +419,8 @@ docker logs ztplanet-ztnet-1
 重新粘贴本文第三节完整内容后重建；不要手动删除 Planet 数据。
 
 健康检查访问根路径只验证进程是否已提供 HTTP 响应；ZTNet 根路径没有业务页面，返回 404
-是合法状态，不代表服务故障。5xx 或无法连接才会被判定为不健康。
+是合法状态，不代表服务故障。5xx 或无法连接才会被判定为不健康。若重建后仍为 `unhealthy`，
+请同时提供健康检查输出和 `docker logs`，不要删除 `./data/`。
 
 如果这台机器曾使用本项目早期版本的 Docker named volume，不能直接切换 Compose 后期待
 数据自动出现；先完成一次“旧卷 → `./data/`”迁移。下面的命令只把旧卷作为只读来源，新的

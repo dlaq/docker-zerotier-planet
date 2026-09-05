@@ -157,7 +157,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-      start_period: 30s
+      # ARM 首次启动可能要先完成 Prisma migration/seed，给应用足够预热时间。
+      start_period: 90s
 
   gateway-init:
     image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.0}}
