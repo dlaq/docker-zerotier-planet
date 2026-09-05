@@ -8,7 +8,7 @@
 GitHub 仓库必须配置以下 Actions Secret：
 
 - `DOCKERHUB_USERNAME`：Docker Hub 用户名；
-- `DOCKERHUB_PASSWORD`：Docker Hub Access Token，不是账户明文密码。
+- `DOCKERHUB_TOKEN`：Docker Hub Access Token，不是账户明文密码。
 
 再配置普通 Actions Variable：
 
@@ -25,11 +25,11 @@ Access Token 必须放在 **Secrets**，不能放在普通 Variables。若曾经
 发布以下五个标签：
 
 ```text
-用户名/仓库:zerotier-v1.0.0
-用户名/仓库:ztnet-v1.0.0
-用户名/仓库:relay-v1.0.0
-用户名/仓库:postgres-v1.0.0
-用户名/仓库:gateway-v1.0.0
+用户名/仓库:zerotier-v1.0.1
+用户名/仓库:ztnet-v1.0.1
+用户名/仓库:relay-v1.0.1
+用户名/仓库:postgres-v1.0.1
+用户名/仓库:gateway-v1.0.1
 ```
 
 也可以在 GitHub Actions 手动运行“安全门禁与 Docker Hub 发布”，勾选发布并填写版本。不要复用或
@@ -50,12 +50,12 @@ sudo docker login --username DOCKERHUB_USERNAME
 然后安装：
 
 ```bash
-git clone --branch v1.0.0 --depth 1 \
+git clone --branch v1.0.1 --depth 1 \
   https://github.com/dlaq/docker-zerotier-planet.git \
-  /srv/ztplanet-v1.0.0
+  /srv/ztplanet-v1.0.1
 
-cd /srv/ztplanet-v1.0.0
-sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.0
+cd /srv/ztplanet-v1.0.1
+sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.1
 ```
 
 安装器会把精确镜像引用写入 `/etc/ztplanet/images.env`，拉取包括默认关闭的 TCP 中继
@@ -148,13 +148,13 @@ docker start myztplanet
 识别并导入：
 
 ```bash
-new_release=/srv/ztplanet-v1.0.0
+new_release=/srv/ztplanet-v1.0.1
 legacy_repo=/旧仓库准确路径
 
 sudo install -d -m 0750 "$new_release/data/zerotier"
 sudo cp -a "$legacy_repo/data/zerotier/one" "$new_release/data/zerotier/one"
 cd "$new_release"
-sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.0
+sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.1
 ```
 
 安装器会停止运行中的 `myztplanet`、额外制作时间戳备份、把数据导入

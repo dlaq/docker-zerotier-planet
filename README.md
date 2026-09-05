@@ -41,7 +41,7 @@ GitHub 安全门禁通过后会把五个组件发布为同一 Docker Hub 仓库�
 
 ```bash
 sudo docker login --username DOCKERHUB_USERNAME
-sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.0
+sudo ./deploy.sh install-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.0.1
 sudo ./deploy.sh upgrade-dockerhub DOCKERHUB_USERNAME/zerotier-planet-test v1.1.0
 sudo ./deploy.sh backup
 sudo ./deploy.sh restore /var/backups/ztplanet/20260905T120000Z

@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       release:
-        description: "不可变发布标签，例如 v1.0.0"
+        description: "不可变发布标签，例如 v1.0.1"
         required: false
         type: string
 
@@ -125,11 +125,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           test -n "$DOCKERHUB_USERNAME"
-          test -n "$DOCKERHUB_PASSWORD"
-          printf '%s' "$DOCKERHUB_PASSWORD" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+          test -n "$DOCKERHUB_TOKEN"
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
       - name: 发布五个经过扫描的镜像
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         run: |
