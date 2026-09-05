@@ -6,6 +6,8 @@ name: ztplanet
 #   ZTPLANET_AUTH_SECRET：至少 64 位随机字符串
 # 生成方法：分别执行 openssl rand -hex 32 和 openssl rand -hex 48。
 # 1Panel 操作：容器 -> 编排 -> 创建编排，名称必须为 ztplanet，粘贴全文并填写上述变量。
+# 使用标准 docker compose 时，可将 docker-compose.1panel.env.example 复制为同目录的 .env；
+# Compose 会自动读取 .env。1Panel 粘贴模式若不读取 .env，则在环境变量区填写相同键值。
 # 所有持久化数据均写入编排目录下的 ./data/ 子目录，不使用 Docker named volume。
 # 默认访问：在自己的电脑执行 ssh -N -L 3443:127.0.0.1:3443 用户@VPS公网IP，
 # 然后打开 https://localhost:3443。默认公网只需放行 UDP/9993，不要放行 TCP/3443。

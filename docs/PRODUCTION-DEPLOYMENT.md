@@ -59,6 +59,24 @@ openssl rand -hex 48
 第一行用于 `ZTPLANET_DB_PASSWORD`，第二行用于 `ZTPLANET_AUTH_SECRET`。只保存到部署者
 自己的密码管理器和 1Panel 编排环境变量中，不要发回发布者、聊天或工单。
 
+### 可选：使用 `.env` 文件
+
+使用命令行 Compose 或 1Panel 的“路径选择”模式时，可以把交付包中的
+`docker-compose.1panel.env.example` 复制为 Compose 同目录的 `.env`，并替换随机值：
+
+```bash
+cp docker-compose.1panel.env.example .env
+chmod 600 .env
+```
+
+标准 Docker Compose 会自动读取同目录 `.env`。1Panel 的“粘贴 Compose 内容”模式是否读取
+该文件取决于 1Panel 版本；如果它不读取，就在环境变量区域填入 `.env` 中的相同键值。
+两处同时存在同名变量时，以 1Panel 实际传给 Compose 的值为准；不要让两处值不一致。
+动态公网 IP 不需要填写 `MANAGEMENT_HOST`：省略该变量或保留 `localhost`，通过 SSH 隧道访问。
+如果必须直接从公网访问，请使用一个稳定的动态 DNS 名称作为 `MANAGEMENT_HOST`；不要把
+`0.0.0.0` 当作浏览器访问地址。`MANAGEMENT_BIND_ADDRESS=0.0.0.0` 仍表示监听全部宿主机
+地址，会扩大公网暴露面，必须配合云防火墙限制来源。
+
 ## 三、完整 Compose 内容
 
 复制本节稍后给出的整个 `yaml` 代码块，从第一行 `name: ztplanet` 复制到最后一行
@@ -81,6 +99,8 @@ name: ztplanet
 #   ZTPLANET_AUTH_SECRET：至少 64 位随机字符串
 # 生成方法：分别执行 openssl rand -hex 32 和 openssl rand -hex 48。
 # 1Panel 操作：容器 -> 编排 -> 创建编排，名称必须为 ztplanet，粘贴全文并填写上述变量。
+# 使用标准 docker compose 时，可将 docker-compose.1panel.env.example 复制为同目录的 .env；
+# Compose 会自动读取 .env。1Panel 粘贴模式若不读取 .env，则在环境变量区填写相同键值。
 # 所有持久化数据均写入编排目录下的 ./data/ 子目录，不使用 Docker named volume。
 # 默认访问：在自己的电脑执行 ssh -N -L 3443:127.0.0.1:3443 用户@VPS公网IP，
 # 然后打开 https://localhost:3443。默认公网只需放行 UDP/9993，不要放行 TCP/3443。

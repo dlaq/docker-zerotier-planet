@@ -58,6 +58,12 @@ ZTPLANET_DB_PASSWORD=第一条随机值
 ZTPLANET_AUTH_SECRET=第二条随机值
 ```
 
+使用命令行 Compose 时，也可以把仓库中的
+[`docker-compose.1panel.env.example`](docker-compose.1panel.env.example) 复制为 Compose
+同目录的 `.env`，替换其中的随机值和地址。Compose 会自动读取 `.env`；1Panel 粘贴模式若
+不自动读取该文件，则在编排的环境变量区填入相同键值。`.env` 只保存在 VPS，权限应为
+`0600`，不得提交或发送给他人。
+
 启动后从本机建立 SSH 隧道：
 
 ```bash
