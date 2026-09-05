@@ -99,12 +99,18 @@ services:
         chown -R 1001:1001 /data /backups
         chown 0:1001 /controller
         chmod 2750 /controller
-        for file in authtoken.secret identity.public planet; do
-          if [ -e "/controller/$${file}" ]; then
-            chown 0:1001 "/controller/$${file}"
-            chmod 0640 "/controller/$${file}"
-          fi
-        done
+        if [ -e /controller/authtoken.secret ]; then
+          chown 0:1001 /controller/authtoken.secret
+          chmod 0640 /controller/authtoken.secret
+        fi
+        if [ -e /controller/identity.public ]; then
+          chown 0:1001 /controller/identity.public
+          chmod 0640 /controller/identity.public
+        fi
+        if [ -e /controller/planet ]; then
+          chown 0:1001 /controller/planet
+          chmod 0640 /controller/planet
+        fi
     depends_on:
       zerotier:
         condition: service_healthy
