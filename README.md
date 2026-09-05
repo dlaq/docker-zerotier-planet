@@ -37,7 +37,7 @@ PostgreSQL 为正式路径；强行改成 SQLite 会形成长期兼容分支。�
 
 对外只需交付 [`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md) 这一份中文
 文档。文档已经内嵌完整 Compose、秘密值生成、访问、备份、升级和新旧机迁移命令；部署者
-不需要访问本私有 GitHub 仓库、下载源码或索取其他文件。`docker-compose.1panel.yml` 是
+不需要访问 GitHub 仓库、下载源码或索取其他文件。`docker-compose.1panel.yml` 是
 仓库内受门禁校验的同源副本，不是部署者必须取得的第二个交付物。
 
 在 VPS 终端生成两个不同的随机值：
