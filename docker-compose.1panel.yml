@@ -142,10 +142,11 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown -R 1002:1002 /data /config && chmod 0700 /data /config"]
+    command: ["chown 0:0 /data /config && chmod 0700 /data /config && chown -R 1002:1002 /data /config"]
     volumes:
       - gateway-data:/data
       - gateway-config:/config
+    network_mode: none
     read_only: true
     security_opt:
       - no-new-privileges:true

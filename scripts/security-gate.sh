@@ -40,6 +40,12 @@ if document.count(begin) != 1 or document.count(end) != 1:
 embedded = document.split(begin, 1)[1].split(end, 1)[0]
 if embedded != compose:
     raise SystemExit("Embedded production Compose differs from docker-compose.1panel.yml")
+gateway_init = (
+    'command: ["chown 0:0 /data /config && chmod 0700 /data /config '
+    '&& chown -R 1002:1002 /data /config"]'
+)
+if gateway_init not in compose:
+    raise SystemExit("gateway-init must remain idempotent with only CAP_CHOWN")
 PY
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then

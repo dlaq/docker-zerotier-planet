@@ -212,10 +212,11 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown -R 1002:1002 /data /config && chmod 0700 /data /config"]
+    command: ["chown 0:0 /data /config && chmod 0700 /data /config && chown -R 1002:1002 /data /config"]
     volumes:
       - gateway-data:/data
       - gateway-config:/config
+    network_mode: none
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -365,6 +366,11 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 - `relay`：默认不会创建或运行。
 
 `gateway-init` 是一次性权限初始化任务，成功后显示“已退出”是正常状态，不是故障。
+
+如果曾使用较早的 Compose，出现 `gateway-init didn't complete successfully: exit 1`，不要
+删除任何卷。确认 `gateway-init` 的 `command` 与本文第三节完全一致，然后在 1Panel 保存并
+“重建”编排。新命令会先临时取回顶层目录所有权、设置权限，再递归交给 UID 1002，因此既能
+修复已经失败过的卷，也能在以后重复执行。
 
 ## 五、默认访问方法
 
