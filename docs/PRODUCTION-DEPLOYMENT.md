@@ -66,7 +66,9 @@ openssl rand -hex 48
 健康检查、bind 挂载或网络配置。Docker 会在编排目录下自动创建 `./data/` 子目录。
 不要为了排错执行 `chmod 777`；`ztnet-init` 会在 ZeroTier 健康后把控制器目录设为
 `root:1001`、把 ZTNet 必需的 `authtoken.secret`、`identity.public` 和 `planet` 设为
-`root:1001/0640`，`gateway-init` 会设置网关目录权限。
+`root:1001/0640`。`gateway-init` 会生成 `./data/gateway-config/caddy/Caddyfile`，并把
+网关运行目录设为 UID/GID 1002；gateway 以只读 bind 挂载读取 Caddyfile。这样兼容不支持
+`configs.content` 的 1Panel 版本，也不会让运行中的网关写入 Caddyfile。
 
 <!-- ZTPLANET-COMPOSE-BEGIN -->
 
@@ -82,6 +84,8 @@ name: ztplanet
 # 所有持久化数据均写入编排目录下的 ./data/ 子目录，不使用 Docker named volume。
 # 默认访问：在自己的电脑执行 ssh -N -L 3443:127.0.0.1:3443 用户@VPS公网IP，
 # 然后打开 https://localhost:3443。默认公网只需放行 UDP/9993，不要放行 TCP/3443。
+# 1Panel 部分版本不支持 Compose configs.content；gateway-init 会把 Caddyfile 写入
+# ./data/gateway-config/caddy，并由 gateway 以只读 bind 挂载加载。
 # 开放 relay：增加 COMPOSE_PROFILES=relay、RELAY_BIND_ADDRESS、RELAY_PUBLIC_PORT 和
 # RELAY_ALLOWED_CIDRS；外层不是真 TLS，留空 CIDR 表示允许任何来源。
 
@@ -266,10 +270,39 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown 0:0 /data /config && chmod 0700 /data /config && chown -R 1002:1002 /data /config"]
+    command:
+      - |
+        umask 027
+        chown 0:0 /data /config /caddy
+        chmod 0700 /data /config
+        chmod 0750 /caddy
+        if [ -L /caddy/Caddyfile ]; then rm -f /caddy/Caddyfile; fi
+        cat > /caddy/Caddyfile <<'EOF'
+        {
+          admin off
+          auto_https disable_redirects
+        }
+
+        https://${MANAGEMENT_HOST:-localhost}:3443 {
+          tls internal
+          header {
+            -Server
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "no-referrer"
+            Permissions-Policy "camera=(), microphone=(), geolocation=()"
+            Strict-Transport-Security "max-age=31536000"
+          }
+          reverse_proxy ztnet:3000
+        }
+        EOF
+        chown -R 1002:1002 /data /config
+        chown 0:1002 /caddy /caddy/Caddyfile
+        chmod 0640 /caddy/Caddyfile
     volumes:
       - ./data/gateway-data:/data
-      - ./data/gateway-config:/config
+      - ./data/gateway-config/runtime:/config
+      - ./data/gateway-config/caddy:/caddy
     network_mode: none
     read_only: true
     security_opt:
@@ -283,13 +316,10 @@ services:
     image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.0@sha256:449c826588895579f6d00356849ed20422fffe5904139c9621ca22de76159131
     restart: unless-stopped
     user: "1002:1002"
-    configs:
-      - source: caddyfile
-        target: /etc/caddy/Caddyfile
-        mode: 0444
     volumes:
       - ./data/gateway-data:/data
-      - ./data/gateway-config:/config
+      - ./data/gateway-config/runtime:/config
+      - ./data/gateway-config/caddy:/etc/caddy:ro
     ports:
       - "${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${MANAGEMENT_PORT:-3443}:3443/tcp"
     networks:
@@ -347,27 +377,6 @@ services:
       timeout: 3s
       retries: 3
 
-configs:
-  caddyfile:
-    content: |
-      {
-        admin off
-        auto_https disable_redirects
-      }
-
-      https://${MANAGEMENT_HOST:-localhost}:3443 {
-        tls internal
-        header {
-          -Server
-          X-Content-Type-Options "nosniff"
-          X-Frame-Options "DENY"
-          Referrer-Policy "no-referrer"
-          Permissions-Policy "camera=(), microphone=(), geolocation=()"
-          Strict-Transport-Security "max-age=31536000"
-        }
-        reverse_proxy ztnet:3000
-      }
-
 networks:
   app-network:
     driver: bridge
@@ -413,6 +422,12 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 - `relay`：默认不会创建或运行。
 
 `gateway-init` 是一次性权限初始化任务，成功后显示“已退出”是正常状态，不是故障。
+
+如果 1Panel 报 `cannot create config ... configs.content`，说明它的 Compose 实现不支持
+内联 Config 对象；请使用本文最新的完整 Compose。新版不再声明顶层 `configs:`，而是由
+`gateway-init` 在 `./data/gateway-config/caddy/Caddyfile` 生成配置，`gateway` 以只读 bind
+挂载读取它。无需重建或重新拉取镜像，也不要删除 `./data/`；在 1Panel 保存后选择“重建”
+编排即可。
 
 如果曾使用较早的 Compose，出现 `gateway-init didn't complete successfully: exit 1`，不要
 删除任何 `./data/` 目录。确认 `gateway-init` 的 `command` 与本文第三节完全一致，然后在
@@ -743,7 +758,8 @@ sudo sh -c 'cd /var/backups/ztplanet-before-compose && sha256sum -c SHA256SUMS'
 - `./data/ztnet-planet`：生成和保留的 Planet 文件；
 - `./data/ztnet-backups`：ZTNet 导出备份；
 - `./data/gateway-data`：内部 CA、证书和私钥；
-- `./data/gateway-config`：网关运行配置。
+- `./data/gateway-config/runtime`：网关运行配置和 Caddy 自动保存状态；
+  `./data/gateway-config/caddy/Caddyfile`：由 `gateway-init` 生成、由 gateway 只读加载的入口配置。
 
 还必须在密码管理器中备份原 `ZTPLANET_DB_PASSWORD` 和 `ZTPLANET_AUTH_SECRET`。镜像和
 Compose 不含这两个值。PostgreSQL 日常恢复以 `pg_dump` 为准；原始目录归档仅用于同版本

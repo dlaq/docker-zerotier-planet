@@ -41,13 +41,15 @@ if document.count(begin) != 1 or document.count(end) != 1:
 embedded = document.split(begin, 1)[1].split(end, 1)[0]
 if embedded != compose:
     raise SystemExit("Embedded production Compose differs from docker-compose.1panel.yml")
-gateway_init = (
-    'command: ["chown 0:0 /data /config && chmod 0700 /data /config '
-    '&& chown -R 1002:1002 /data /config"]'
-)
-if gateway_init not in compose:
-    raise SystemExit("gateway-init must remain idempotent with only CAP_CHOWN")
 for required in (
+    'chown 0:0 /data /config /caddy',
+    'cat > /caddy/Caddyfile <<\'EOF\'',
+    'chown -R 1002:1002 /data /config',
+    'chown 0:1002 /caddy /caddy/Caddyfile',
+    'chmod 0640 /caddy/Caddyfile',
+    './data/gateway-config/runtime:/config',
+    './data/gateway-config/caddy:/caddy',
+    './data/gateway-config/caddy:/etc/caddy:ro',
     'chown 0:0 /data /backups',
     'chmod 0750 /data /backups',
     'chown -R 1001:1001 /data /backups',
@@ -77,6 +79,8 @@ for compose_path in (
     text = compose_path.read_text(encoding="utf-8")
     if re.search(r"(?m)^volumes:\s*$", text):
         raise SystemExit(f"{compose_path} must not declare top-level named volumes")
+    if compose_path.name == "docker-compose.1panel.yml" and re.search(r"(?m)^configs:\s*$", text):
+        raise SystemExit("1Panel Compose must use bind-mounted Caddyfile, not configs.content")
     named_mounts = [
         line for line in text.splitlines()
         if re.search(r"^\s*-\s+[A-Za-z0-9_.-]+:/", line)
