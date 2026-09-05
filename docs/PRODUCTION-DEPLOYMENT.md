@@ -223,7 +223,7 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 20
@@ -404,6 +404,9 @@ docker logs ztplanet-ztnet-1
 本 Compose 已包含 `ztnet-init`，它会在 `ztnet` 启动前把 `ztplanet_ztnet-planet` 卷准备为
 UID 1001。若使用旧 Compose 失败过，保留卷并重新粘贴本文第三节完整内容后重建；不要手动
 删除 Planet 卷。
+
+健康检查访问根路径只验证进程是否已提供 HTTP 响应；ZTNet 根路径没有业务页面，返回 404
+是合法状态，不代表服务故障。5xx 或无法连接才会被判定为不健康。
 
 ## 五、默认访问方法
 

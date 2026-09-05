@@ -46,6 +46,9 @@ gateway_init = (
 )
 if gateway_init not in compose:
     raise SystemExit("gateway-init must remain idempotent with only CAP_CHOWN")
+healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
+if healthcheck not in compose:
+    raise SystemExit("ZTNet healthcheck must accept legitimate HTTP 4xx responses")
 PY
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
