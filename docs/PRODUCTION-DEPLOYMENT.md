@@ -444,6 +444,19 @@ sudo docker inspect ztplanet-ztnet-1 \
 共享读取权限。若使用旧 Compose 失败过，保留 `./data/` 目录并重新粘贴本文第三节完整
 内容后重建；不要手动删除 Planet 数据。
 
+重建后可验证 ZTNet 是否能读取控制器密钥：
+
+```bash
+sudo docker exec ztplanet-ztnet-1 /bin/sh -c \
+  'id; ls -ld /run/zerotier-controller; ls -l \
+  /run/zerotier-controller/authtoken.secret \
+  /run/zerotier-controller/identity.public \
+  /run/zerotier-controller/planet'
+```
+
+目录应为 `root 1001` 且至少可由组读取（例如 `drwxr-x---`、`-rw-r-----`）。
+`identity.secret` 不在 ZTNet 的必需文件列表中，不应改为组可读。
+
 健康检查访问镜像内的静态 `favicon.ico`，只验证进程是否已提供 HTTP 响应，不执行登录页或
 业务页面逻辑。5xx 或无法连接才会被判定为不健康。若重建后仍为 `unhealthy`，
 请同时提供健康检查输出和 `docker logs`，不要删除 `./data/`。
