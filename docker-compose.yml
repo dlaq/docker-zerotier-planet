@@ -1,5 +1,8 @@
 name: ztplanet
 
+# Persistent state is kept in ./data/* bind directories relative to the project directory.
+# This file intentionally declares no Docker named volumes.
+
 services:
   postgres:
     image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.0}}
@@ -22,7 +25,7 @@ services:
       - -c
       - password_encryption=scram-sha-256
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     networks:
       app-network:
         ipv4_address: 172.31.255.4
@@ -51,7 +54,7 @@ services:
     image: ${ZTPLANET_ZEROTIER_IMAGE:-docker.io/dlaq/zerotier-planet-test:zerotier-${ZTPLANET_RELEASE:-v1.1.0}}
     restart: unless-stopped
     volumes:
-      - zerotier-data:/var/lib/zerotier-one
+      - ./data/zerotier:/var/lib/zerotier-one
     networks:
       app-network:
         ipv4_address: 172.31.255.2
@@ -84,6 +87,27 @@ services:
       retries: 12
       start_period: 20s
 
+  ztnet-init:
+    image: ${ZTPLANET_ZTNET_IMAGE:-docker.io/dlaq/zerotier-planet-test:ztnet-${ZTPLANET_RELEASE:-v1.1.0}}
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown 0:0 /data /backups && chmod 0750 /data /backups && chown -R 1001:1001 /data /backups"]
+    volumes:
+      - ./data/ztnet-planet:/data
+      - ./data/ztnet-backups:/backups
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    pids_limit: 128
+    mem_limit: 128m
+    cpus: 0.25
+
   ztnet:
     image: ${ZTPLANET_ZTNET_IMAGE:-docker.io/dlaq/zerotier-planet-test:ztnet-${ZTPLANET_RELEASE:-v1.1.0}}
     restart: unless-stopped
@@ -104,9 +128,9 @@ services:
       ZTPLANET_AGENT_SECRET_FILE: /run/ztplanet/agent.secret
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
-      - zerotier-data:/run/zerotier-controller:ro
-      - ztnet-planet:/var/lib/zerotier-one
-      - ztnet-backups:/app/tmp/backups
+      - ./data/zerotier:/run/zerotier-controller:ro
+      - ./data/ztnet-planet:/var/lib/zerotier-one
+      - ./data/ztnet-backups:/app/tmp/backups
       - /run/ztplanet/agent.sock:/run/ztplanet/agent.sock
       - /etc/ztplanet/agent.secret:/run/ztplanet/agent.secret:ro
     ports:
@@ -119,6 +143,8 @@ services:
         condition: service_healthy
       zerotier:
         condition: service_healthy
+      ztnet-init:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=1001,gid=1001
@@ -126,6 +152,33 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  gateway-init:
+    image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.0}}
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown 0:0 /data /config && chmod 0700 /data /config && chown -R 1002:1002 /data /config"]
+    volumes:
+      - ./data/gateway-data:/data
+      - ./data/gateway-config:/config
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    pids_limit: 128
+    mem_limit: 128m
+    cpus: 0.25
 
   gateway:
     image: ${ZTPLANET_GATEWAY_IMAGE:-docker.io/dlaq/zerotier-planet-test:gateway-${ZTPLANET_RELEASE:-v1.1.0}}
@@ -135,12 +188,14 @@ services:
     volumes:
       - /etc/ztplanet/generated/Caddyfile:/etc/caddy/Caddyfile:ro
       - /etc/ztplanet/tls:/etc/ztplanet/tls:ro
+      - ./data/gateway-data:/data
+      - ./data/gateway-config:/config
     depends_on:
-      - ztnet
+      gateway-init:
+        condition: service_completed_successfully
+      ztnet:
+        condition: service_healthy
     read_only: true
-    tmpfs:
-      - /config:rw,noexec,nosuid,nodev,size=16m,uid=1002,gid=1002
-      - /data:rw,noexec,nosuid,nodev,size=16m,uid=1002,gid=1002
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -179,12 +234,6 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
-
-volumes:
-  zerotier-data:
-  ztnet-planet:
-  postgres-data:
-  ztnet-backups:
 
 networks:
   app-network:

@@ -3,6 +3,7 @@ set -eu
 
 install_dir=/opt/ztplanet
 state_dir=/etc/ztplanet
+data_dir=$install_dir/data
 backup_root=/var/backups/ztplanet
 automatic=false
 if [ "${1:-}" = "--automatic" ]; then
@@ -56,6 +57,11 @@ PY
 validate_archive "$backup_dir/system-config.tar.gz"
 validate_archive "$backup_dir/zerotier-state.tar.gz"
 validate_archive "$backup_dir/ztnet-planet.tar.gz"
+for file in postgres-data.tar.gz ztnet-backups.tar.gz gateway-data.tar.gz gateway-config.tar.gz; do
+    if [ -f "$backup_dir/$file" ]; then
+        validate_archive "$backup_dir/$file"
+    fi
+done
 
 if [ "$automatic" != true ]; then
     printf 'Type RESTORE-ZTPLANET to replace the current database, identity and configuration: '
@@ -83,7 +89,12 @@ else
     pre_restore=$($install_dir/scripts/backup.sh)
     echo "Pre-restore recovery point: $pre_restore"
 fi
-compose stop gateway ztnet relay zerotier
+compose stop gateway ztnet relay zerotier postgres
+
+install -d -m 0750 -o root -g root "$data_dir"
+for directory in postgres zerotier ztnet-planet ztnet-backups gateway-data gateway-config; do
+    install -d -m 0750 -o root -g root "$data_dir/$directory"
+done
 
 tmp_dir=$(mktemp -d /etc/ztplanet/.restore.XXXXXX)
 cleanup() { rm -rf --one-file-system "$tmp_dir"; }
@@ -99,17 +110,29 @@ if [ -f "$tmp_dir/images.env" ]; then
     install -m 0640 -o root -g root "$tmp_dir/images.env" "$state_dir/images.env"
 fi
 
-docker run --rm \
-    -v ztplanet_zerotier-data:/target \
-    -v "$backup_dir:/backup:ro" \
-    alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
-    sh -eu -c 'find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -o --no-same-permissions -C /target -xzf /backup/zerotier-state.tar.gz'
+restore_bind_directory() {
+    archive=$1
+    target=$2
+    owner=$3
+    mode=$4
+    if [ ! -f "$backup_dir/$archive" ]; then
+        echo "Optional archive absent; retaining $target: $archive" >&2
+        return
+    fi
+    find "$target" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    tar --no-same-owner --no-same-permissions -C "$target" -xzf "$backup_dir/$archive"
+    if [ -n "$owner" ]; then
+        chown -R "$owner" "$target"
+    fi
+    chmod "$mode" "$target"
+}
 
-docker run --rm \
-    -v ztplanet_ztnet-planet:/target \
-    -v "$backup_dir:/backup:ro" \
-    alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
-    sh -eu -c 'find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -o --no-same-permissions -C /target -xzf /backup/ztnet-planet.tar.gz; chown -R 1001:1001 /target; chmod 0750 /target'
+restore_bind_directory postgres-data.tar.gz "$data_dir/postgres" "" 0700
+restore_bind_directory zerotier-state.tar.gz "$data_dir/zerotier" 0:1001 2770
+restore_bind_directory ztnet-planet.tar.gz "$data_dir/ztnet-planet" 1001:1001 0750
+restore_bind_directory ztnet-backups.tar.gz "$data_dir/ztnet-backups" 1001:1001 0750
+restore_bind_directory gateway-data.tar.gz "$data_dir/gateway-data" 1002:1002 0700
+restore_bind_directory gateway-config.tar.gz "$data_dir/gateway-config" 1002:1002 0700
 
 rm -rf --one-file-system "$state_dir/generated" "$state_dir/tls"
 install -m 0640 "$tmp_dir/config.json" "$state_dir/config.json"

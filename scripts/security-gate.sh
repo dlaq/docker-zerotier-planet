@@ -29,6 +29,7 @@ python3 -m json.tool security/relay-seccomp.json >/dev/null
 # release if its embedded Compose ever drifts from the validated source file.
 python3 - <<'PY'
 from pathlib import Path
+import re
 
 root = Path.cwd()
 document = (root / "docs/PRODUCTION-DEPLOYMENT.md").read_text(encoding="utf-8")
@@ -46,9 +47,33 @@ gateway_init = (
 )
 if gateway_init not in compose:
     raise SystemExit("gateway-init must remain idempotent with only CAP_CHOWN")
+ztnet_init = (
+    'command: ["chown 0:0 /data /backups && chmod 0750 /data /backups '
+    '&& chown -R 1001:1001 /data /backups"]'
+)
+if ztnet_init not in compose:
+    raise SystemExit("ztnet-init must prepare both Planet and backup bind directories")
 healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
 if healthcheck not in compose:
     raise SystemExit("ZTNet healthcheck must accept legitimate HTTP 4xx responses")
+for compose_path in (
+    root / "docker-compose.1panel.yml",
+    root / "docker-compose.yml",
+    root / "services/ztnet/docker-compose.yml",
+):
+    text = compose_path.read_text(encoding="utf-8")
+    if re.search(r"(?m)^volumes:\s*$", text):
+        raise SystemExit(f"{compose_path} must not declare top-level named volumes")
+    named_mounts = [
+        line for line in text.splitlines()
+        if re.search(r"^\s*-\s+[A-Za-z0-9_.-]+:/", line)
+    ]
+    if named_mounts:
+        raise SystemExit(f"{compose_path} contains named volume mounts: {named_mounts}")
+for script_name in ("scripts/backup.sh", "scripts/restore.sh"):
+    script = (root / script_name).read_text(encoding="utf-8")
+    if "docker volume" in script or "ztplanet_" in script:
+        raise SystemExit(f"{script_name} must operate on ./data bind directories")
 PY
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then

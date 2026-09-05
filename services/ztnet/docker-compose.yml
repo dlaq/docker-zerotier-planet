@@ -1,3 +1,5 @@
+# Development data is kept in ./data/* bind directories; no Docker named volumes are declared.
+
 services:
   postgres:
     image: postgres:15.2-alpine
@@ -8,7 +10,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: ztnet
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     networks:
       - app-network
 
@@ -18,7 +20,7 @@ services:
     container_name: zerotier
     restart: unless-stopped
     volumes:
-      - zerotier:/var/lib/zerotier-one
+      - ./data/zerotier:/var/lib/zerotier-one
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
@@ -37,7 +39,7 @@ services:
     container_name: ztnet
     working_dir: /app
     volumes:
-      - zerotier:/var/lib/zerotier-one
+      - ./data/zerotier:/var/lib/zerotier-one
     restart: unless-stopped
     ports:
       - 3000:3000
@@ -63,7 +65,7 @@ services:
   #                                                                          #
   # Steps:                                                                   #
   # 1. Replace <YOUR-PUBLIC-HOST-NAME> with your actual public domain name.  #
-  # 2. Uncomment the caddy_data volume definition in the volumes section.    #
+  # 2. Create ./data/caddy before enabling the service.                         #
   #                                                                          #
   ############################################################################
 
@@ -75,7 +77,7 @@ services:
   #     - ztnet
   #   command: caddy reverse-proxy --from <YOUR-PUBLIC-HOST-NAME> --to ztnet:3000
   #   volumes:
-  #     - caddy_data:/data
+  #     - ./data/caddy:/data
   #   networks:
   #     - app-network
   #   links:
@@ -83,11 +85,6 @@ services:
   #   ports:
   #     - "80:80"
   #     - "443:443"
-
-volumes:
-  zerotier:
-  postgres-data:
-  # caddy_data:
 
 networks:
   app-network:

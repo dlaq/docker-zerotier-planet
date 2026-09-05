@@ -4,6 +4,7 @@ set -eu
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 install_dir=/opt/ztplanet
 state_dir=/etc/ztplanet
+data_dir=$install_dir/data
 release=${1:-v1.1.0}
 repository=${2:-dlaq/zerotier-planet-test}
 
@@ -49,6 +50,11 @@ if [ "$source_dir" != "$install_dir" ]; then
 fi
 chmod 0755 "$install_dir/deploy.sh" "$install_dir/build.sh" "$install_dir/scripts/"*.sh
 chmod 0755 "$install_dir/services/config-agent/ztplanet_agent.py" "$install_dir/services/zerotier/entrypoint.sh"
+
+install -d -m 0750 -o root -g root "$data_dir"
+for directory in postgres zerotier ztnet-planet ztnet-backups gateway-data gateway-config; do
+    install -d -m 0750 -o root -g root "$data_dir/$directory"
+done
 
 install -d -m 0750 -o root -g root "$state_dir"
 runtime_env=$state_dir/runtime.env

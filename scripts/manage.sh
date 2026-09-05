@@ -4,6 +4,7 @@ set -eu
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 install_dir=/opt/ztplanet
 state_dir=/etc/ztplanet
+data_dir=$install_dir/data
 runtime_env=$state_dir/runtime.env
 image_env=$state_dir/images.env
 generated_env=$state_dir/generated/stack.env
@@ -116,6 +117,33 @@ copy_release() {
     chmod 0755 "$install_dir/services/config-agent/ztplanet_agent.py" "$install_dir/services/zerotier/entrypoint.sh"
 }
 
+initialize_data_dirs() {
+    install -d -m 0750 -o root -g root "$data_dir"
+    for directory in postgres zerotier ztnet-planet ztnet-backups gateway-data gateway-config; do
+        install -d -m 0750 -o root -g root "$data_dir/$directory"
+    done
+}
+
+check_legacy_named_storage() {
+    legacy_volumes=
+    for volume in ztplanet_postgres-data ztplanet_zerotier-data ztplanet_ztnet-planet ztplanet_ztnet-backups ztplanet_gateway-data ztplanet_gateway-config; do
+        if docker volume inspect "$volume" >/dev/null 2>&1; then
+            legacy_volumes="$legacy_volumes $volume"
+        fi
+    done
+    if [ -z "$legacy_volumes" ]; then
+        return
+    fi
+    if [ -s "$data_dir/zerotier/identity.secret" ] && [ -n "$(find "$data_dir/ztnet-planet" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+        echo "Legacy named volumes retained after bind migration:$legacy_volumes" >&2
+        echo "The bind data is populated; continuing without using those volumes." >&2
+        return
+    fi
+    echo "Legacy Docker named volumes detected:$legacy_volumes" >&2
+    echo "Convert them to $data_dir before upgrading; no data will be copied automatically." >&2
+    exit 1
+}
+
 initialize_secrets() {
     install -d -m 0750 -o root -g root "$state_dir"
     if [ ! -f "$runtime_env" ]; then
@@ -167,12 +195,12 @@ legacy_backup_and_import() {
     install -d -m 0700 "$backup_dir"
     timestamp=$(date -u +%Y%m%dT%H%M%SZ)
     tar -C "$legacy" -czf "$backup_dir/legacy-zerotier-$timestamp.tar.gz" .
-    docker volume create ztplanet_zerotier-data >/dev/null
-    docker run --rm \
-        -v "$legacy:/legacy:ro" \
-        -v ztplanet_zerotier-data:/target \
-        alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
-        sh -eu -c 'if [ -z "$(find /target -mindepth 1 -maxdepth 1 -print -quit)" ]; then cp -a /legacy/. /target/; else echo "target volume is not empty; import skipped" >&2; exit 1; fi'
+    target=$data_dir/zerotier
+    if [ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+        echo "Target bind directory is not empty; import skipped." >&2
+        exit 1
+    fi
+    cp -a "$legacy"/. "$target"/
     touch "$state_dir/legacy-imported"
     chmod 0640 "$state_dir/legacy-imported"
     echo "Legacy ZeroTier state imported. Backup: $backup_dir/legacy-zerotier-$timestamp.tar.gz"
@@ -235,6 +263,7 @@ install_stack() {
     for command in docker python3 openssl iptables systemctl tar; do require_command "$command"; done
     docker compose version >/dev/null
     copy_release
+    initialize_data_dirs
     initialize_secrets
     configure_images
     trap recover_failed_install EXIT HUP INT TERM
@@ -262,12 +291,14 @@ upgrade_stack() {
         configure_images
         requested_repository=$saved_repository
     fi
+    check_legacy_named_storage
     upgrade_backup=$("$source_dir/scripts/backup.sh")
     release_backup=$upgrade_backup/release.tar.gz
     tar -C "$install_dir" -czf "$release_backup" .
     sha256sum "$release_backup" >> "$upgrade_backup/SHA256SUMS"
     trap recover_failed_upgrade EXIT HUP INT TERM
     copy_release
+    initialize_data_dirs
     initialize_secrets
     configure_images
     install_agent
@@ -293,7 +324,7 @@ uninstall_stack() {
     compose down
     systemctl disable --now ztplanet-agent.service || true
     "$install_dir/scripts/relay-firewall.sh" remove || true
-    echo "Containers were removed. /etc/ztplanet and Docker volumes were retained."
+    echo "Containers were removed. /etc/ztplanet and $data_dir were retained."
     echo "To irreversibly remove data, run: sudo /opt/ztplanet/scripts/manage.sh purge-data"
 }
 
@@ -305,9 +336,10 @@ purge_data() {
         echo "Cancelled."
         exit 1
     fi
-    compose down --volumes
+    compose down
     systemctl disable --now ztplanet-agent.service || true
     "$install_dir/scripts/relay-firewall.sh" remove || true
+    rm -rf --one-file-system "$data_dir"
     rm -rf --one-file-system "$state_dir"
     echo "ZeroTier identities, PostgreSQL data and configuration were permanently removed."
 }

@@ -26,8 +26,9 @@ ZTNet 是主管理应用。它没有 Docker Socket、宿主机根目录挂载、
 密钥以 root 所有文件保存在 `/etc/ztplanet`。Web 容器只通过精确的只读文件挂载
 获得代理 HMAC 密钥。Controller 状态以只读方式挂载到
 `/run/zerotier-controller`；Unix 权限仅允许 ZTNet 读取组可读的 API Token 和
-公有身份。可写 Planet 工作区使用独立数据卷。TLS 私钥仅允许管理网关的专用数字 GID
-读取，不写入 PostgreSQL，也不会从状态 API 返回。
+公有身份。可写 Planet 工作区使用独立的 `./data/ztnet-planet` bind 目录；这些目录默认由
+root 创建并限制为 0750，启动初始化任务再把必要的目录交给对应服务 UID。TLS 私钥仅允许
+管理网关的专用数字 GID 读取，不写入 PostgreSQL，也不会从状态 API 返回。
 
 管理网关负责用户选择的外部监听器，ZTNet 原始端口始终只发布到宿主机回环地址。
 通配监听器可能已经包含 ZeroTier 接口；生效监听器视图会报告这一事实，不会再建立

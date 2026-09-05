@@ -6,6 +6,7 @@ name: ztplanet
 #   ZTPLANET_AUTH_SECRET：至少 64 位随机字符串
 # 生成方法：分别执行 openssl rand -hex 32 和 openssl rand -hex 48。
 # 1Panel 操作：容器 -> 编排 -> 创建编排，名称必须为 ztplanet，粘贴全文并填写上述变量。
+# 所有持久化数据均写入编排目录下的 ./data/ 子目录，不使用 Docker named volume。
 # 默认访问：在自己的电脑执行 ssh -N -L 3443:127.0.0.1:3443 用户@VPS公网IP，
 # 然后打开 https://localhost:3443。默认公网只需放行 UDP/9993，不要放行 TCP/3443。
 # 开放 relay：增加 COMPOSE_PROFILES=relay、RELAY_BIND_ADDRESS、RELAY_PUBLIC_PORT 和
@@ -33,7 +34,7 @@ services:
       - -c
       - password_encryption=scram-sha-256
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     networks:
       app-network:
         ipv4_address: 172.31.255.4
@@ -62,7 +63,7 @@ services:
     image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.0@sha256:51be0704376cf67b77f88ecf4544eae9793eeeae9d15947bf167b29154eb086c
     restart: unless-stopped
     volumes:
-      - zerotier-data:/var/lib/zerotier-one
+      - ./data/zerotier:/var/lib/zerotier-one
     networks:
       app-network:
         ipv4_address: 172.31.255.2
@@ -100,9 +101,10 @@ services:
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["chown 0:0 /data && chmod 0750 /data && chown -R 1001:1001 /data"]
+    command: ["chown 0:0 /data /backups && chmod 0750 /data /backups && chown -R 1001:1001 /data /backups"]
     volumes:
-      - ztnet-planet:/data
+      - ./data/ztnet-planet:/data
+      - ./data/ztnet-backups:/backups
     network_mode: none
     read_only: true
     security_opt:
@@ -132,9 +134,9 @@ services:
       ZTPLANET_LOGIN_LOCKOUT_SECONDS: "900"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
-      - zerotier-data:/run/zerotier-controller:ro
-      - ztnet-planet:/var/lib/zerotier-one
-      - ztnet-backups:/app/tmp/backups
+      - ./data/zerotier:/run/zerotier-controller:ro
+      - ./data/ztnet-planet:/var/lib/zerotier-one
+      - ./data/ztnet-backups:/app/tmp/backups
     networks:
       app-network:
         ipv4_address: 172.31.255.3
@@ -166,8 +168,8 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: ["chown 0:0 /data /config && chmod 0700 /data /config && chown -R 1002:1002 /data /config"]
     volumes:
-      - gateway-data:/data
-      - gateway-config:/config
+      - ./data/gateway-data:/data
+      - ./data/gateway-config:/config
     network_mode: none
     read_only: true
     security_opt:
@@ -186,8 +188,8 @@ services:
         target: /etc/caddy/Caddyfile
         mode: 0444
     volumes:
-      - gateway-data:/data
-      - gateway-config:/config
+      - ./data/gateway-data:/data
+      - ./data/gateway-config:/config
     ports:
       - "${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${MANAGEMENT_PORT:-3443}:3443/tcp"
     networks:
@@ -265,14 +267,6 @@ configs:
         }
         reverse_proxy ztnet:3000
       }
-
-volumes:
-  zerotier-data:
-  ztnet-planet:
-  postgres-data:
-  ztnet-backups:
-  gateway-data:
-  gateway-config:
 
 networks:
   app-network:

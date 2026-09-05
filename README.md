@@ -20,6 +20,9 @@ PostgreSQL 为正式路径；强行改成 SQLite 会形成长期兼容分支。�
 
 源码提交和基础镜像 digest 均固定。升级方法见 [UPSTREAM.md](UPSTREAM.md)。
 
+所有 Compose 的持久化数据都使用相对路径 bind 挂载，统一保存在编排目录的
+`./data/` 下；项目不声明 Docker named volume。`tmpfs` 仅用于缓存等临时运行数据。
+
 ## 默认安全状态
 
 - 管理端仅监听 `https://127.0.0.1:3443`，自动生成自签名证书；
@@ -65,8 +68,8 @@ ssh -N -L 3443:127.0.0.1:3443 管理用户@VPS公网IP
 仅绑定回环地址，ZeroTier 默认开放 `UDP/9993`，TCP fallback relay 默认关闭。
 
 旧版 `myztplanet` 必须先核验并停止，同时备份其映射到 `/var/lib/zerotier-one` 和
-`/app/dist` 的两个真实宿主机目录，再分别导入 Controller 与 Planet 命名卷。旧容器和原
-目录在验收前不得删除。
+`/app/dist` 的两个真实宿主机目录，再导入新 Compose 的 `./data/zerotier` 与
+`./data/ztnet-planet` bind 目录。旧容器和原目录在验收前不得删除。
 
 只使用 Compose 的完整步骤、环境变量、内网/公网绑定、relay 开启方法及原机/跨机迁移命令
 都在上述单一交付文档中，文档不假设部署者拥有源码。
@@ -97,7 +100,7 @@ relay 阻止回环、私网、链路本地、CGNAT、组播、广播、云元数
 连接已访问目标且未超过请求响应字节额度的回包，并同时限制上下行速率。容器没有
 Controller token、identity、数据库、Docker Socket 或管理网络访问，并启用非 root、只读
 根文件系统、capability 清零、seccomp、资源限制及第二层宿主机 egress 防火墙。ZTNet 对
-Controller 状态卷只有只读访问，Planet 工作文件使用独立可写卷。
+Controller 状态 bind 目录只有只读访问，Planet 工作文件使用独立可写 bind 目录。
 
 审计结论见 [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md)，漏洞报告见
 [SECURITY.md](SECURITY.md)。
