@@ -15,8 +15,12 @@ jest.mock("~/server/api/services/credentialAccountService", () => ({
 }));
 
 // rate-limit dep imports a real fs module; just stub it.
-jest.mock("~/utils/rateLimit", () => () => ({
-	check: jest.fn().mockResolvedValue(true),
+jest.mock("~/utils/rateLimit", () => ({
+	__esModule: true,
+	default: () => ({
+		check: jest.fn().mockResolvedValue(true),
+	}),
+	getClientRateLimitIdentifier: jest.fn(() => "test-client"),
 }));
 
 jest.mock("~/utils/mail", () => ({

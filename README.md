@@ -33,6 +33,18 @@ PostgreSQL 为正式路径；强行改成 SQLite 会形成长期兼容分支。�
 - 第一个注册账户成为管理员，随后开放注册自动关闭；
 - 密码至少 14 位，bcrypt cost 12，默认失败 5 次锁定 15 分钟，会话最长 8 小时。
 
+密码规则和注册限流可在 `.env`/1Panel 环境变量中调整（修改后重启 `ztnet`）：
+
+```env
+ZTPLANET_PASSWORD_MIN_LENGTH=14
+ZTPLANET_PASSWORD_MIN_CLASSES=2
+ZTPLANET_REGISTER_RATE_LIMIT_WINDOW=10
+ZTPLANET_REGISTER_RATE_LIMIT_MAX=60
+```
+
+密码长度有效范围为 8-128，字符类别（小写、大写、数字）有效范围为 1-3；默认值保持
+安全基线。注册限流按客户端 IP 分桶，避免一个地址的失败尝试锁住所有用户。
+
 公网绑定、HTTP、直接暴露 Controller API、任意来源 relay 都允许由用户选择，但界面会显示
 高风险警告、要求管理员重新输入密码，并记录安全审计事件。
 

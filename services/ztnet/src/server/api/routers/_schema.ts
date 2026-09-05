@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { normalizeEmail } from "~/utils/email";
+import {
+	PASSWORD_MAX_LENGTH,
+	passwordMeetsPolicy,
+	passwordPolicyMessage,
+} from "~/utils/passwordPolicy";
 
 /**
  * Email input schema: normalize first, then validate the normalized value.
@@ -19,21 +24,15 @@ export const emailSchema = (invalidMessage?: string, requiredError?: string) =>
 		.transform(normalizeEmail)
 		.pipe(z.string().email(invalidMessage));
 
-// This regular expression (regex) is used to validate a password based on the following criteria:
-// - The password must be at least 14 characters long.
-// - The password must contain at least two of the following three character types:
-//  - Lowercase letters (a-z)
-//  - Uppercase letters (A-Z)
-//  - Digits (0-9)
-export const mediumPassword =
-	/^(((?=.*[a-z])(?=.*[A-Z]))|((?=.*[a-z])(?=.*[0-9]))|((?=.*[A-Z])(?=.*[0-9])))(?=.{14,})/;
+// Kept as a small compatibility wrapper for callers that previously imported
+// `mediumPassword`.  The effective policy is read from the container
+// environment by passwordMeetsPolicy at validation time.
+export const mediumPassword = { test: passwordMeetsPolicy };
 
 // create a zod password schema
 export const passwordSchema = (errorMessage: string) =>
 	z
 		.string()
-		.max(128, { message: "Password must not exceed 128 characters" })
-		.refine((val) => mediumPassword.test(val), {
-			message: errorMessage,
-		})
+		.max(PASSWORD_MAX_LENGTH, { message: "Password must not exceed 128 characters" })
+		.refine(passwordMeetsPolicy, { message: errorMessage || passwordPolicyMessage() })
 		.optional();

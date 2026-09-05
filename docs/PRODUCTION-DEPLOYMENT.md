@@ -262,8 +262,16 @@ services:
       # 显式监听所有容器接口，供本地健康检查和 gateway 访问。
       HOSTNAME: 0.0.0.0
       NEXTAUTH_SESSION_MAX_AGE: "28800"
-      ZTPLANET_LOGIN_ATTEMPTS: "5"
-      ZTPLANET_LOGIN_LOCKOUT_SECONDS: "900"
+      ZTPLANET_PASSWORD_MIN_LENGTH: "${ZTPLANET_PASSWORD_MIN_LENGTH:-14}"
+      ZTPLANET_PASSWORD_MIN_CLASSES: "${ZTPLANET_PASSWORD_MIN_CLASSES:-2}"
+      ZTPLANET_TRUST_PROXY: "${ZTPLANET_TRUST_PROXY:-true}"
+      ZTPLANET_REGISTER_RATE_LIMIT_WINDOW: "${ZTPLANET_REGISTER_RATE_LIMIT_WINDOW:-10}"
+      ZTPLANET_REGISTER_RATE_LIMIT_MAX: "${ZTPLANET_REGISTER_RATE_LIMIT_MAX:-60}"
+      RATE_LIMIT_WINDOW: "${RATE_LIMIT_WINDOW:-10}"
+      RATE_LIMIT_MAX_REQUESTS: "${RATE_LIMIT_MAX_REQUESTS:-60}"
+      RATE_LIMIT_MAX_REQUESTS_SHORT: "${RATE_LIMIT_MAX_REQUESTS_SHORT:-10}"
+      ZTPLANET_LOGIN_ATTEMPTS: "${ZTPLANET_LOGIN_ATTEMPTS:-5}"
+      ZTPLANET_LOGIN_LOCKOUT_SECONDS: "${ZTPLANET_LOGIN_LOCKOUT_SECONDS:-900}"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
       - ./data/zerotier:/run/zerotier-controller:ro
@@ -630,7 +638,28 @@ https://localhost:3443
 ```
 
 Caddy 会自动创建并持久化本实例独有的内部 CA 和自签名证书。首次访问出现证书警告属于
-预期现象。第一个注册账户成为管理员，随后公开注册自动关闭；密码至少 14 位。
+预期现象。第一个注册账户成为管理员，随后公开注册自动关闭。
+
+默认密码规则为 14-128 位，且必须包含小写字母、大写字母、数字中的至少两类。个人使用
+可以在 `.env` 或 1Panel 环境变量中调整（修改后重启 `ztnet`）：
+
+```env
+ZTPLANET_PASSWORD_MIN_LENGTH=8
+ZTPLANET_PASSWORD_MIN_CLASSES=1
+```
+
+长度会被限制在 8-128，字符类别数会被限制在 1-3；低于安全下限的值不会关闭校验。
+注册限流默认按客户端 IP 每 10 分钟 60 次，不同 IP 不再共享同一注册桶。可按需调整：
+
+```env
+ZTPLANET_REGISTER_RATE_LIMIT_WINDOW=10
+ZTPLANET_REGISTER_RATE_LIMIT_MAX=60
+```
+
+修改限流或密码规则后，在 1Panel 对 `ztplanet` 执行“重建/重新创建”即可；不需要删除
+`./data`，也不需要重新构建数据库、ZeroTier 或网关镜像。若刚刚触发旧版内存限流，重启
+`ztnet` 会清空该进程的临时计数；如果提示的是“Too many failed attempts”，那是已有
+账户的登录锁定，可调整 `ZTPLANET_LOGIN_ATTEMPTS` 与 `ZTPLANET_LOGIN_LOCKOUT_SECONDS`。
 
 如果页面打不开，先在 VPS 检查：
 

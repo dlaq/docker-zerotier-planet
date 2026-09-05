@@ -57,7 +57,7 @@ describe("rateLimit partitioning (GHSA-5p34-fh6h-7892)", () => {
 		expect(await callReset("198.51.100.1", "control@example.com")).toBe("allowed");
 	});
 
-	it("one attacker IP exhausts passwordResetLink for every other IP", async () => {
+	it("one attacker IP does not exhaust passwordResetLink for other IPs", async () => {
 		// Drain from a single source IP until it is cut off, rather than
 		// hardcoding the limit, so the test does not depend on env config.
 		let attackerCalls = 0;
@@ -76,17 +76,12 @@ describe("rateLimit partitioning (GHSA-5p34-fh6h-7892)", () => {
 		}
 
 		console.info("victim outcomes:", outcomes);
-		expect(outcomes).toEqual([
-			"TOO_MANY_REQUESTS",
-			"TOO_MANY_REQUESTS",
-			"TOO_MANY_REQUESTS",
-		]);
+		expect(outcomes).toEqual(["allowed", "allowed", "allowed"]);
 	});
 
-	it("the mfaAuth bucket is separate from auth, but equally global", async () => {
-		// Proves the partitioning that DOES exist is per-endpoint, not per-caller:
-		// the auth bucket is exhausted by the previous test, yet MFA still works
-		// -- until one client exhausts that one too.
+	it("the mfaAuth bucket is separate from auth and partitioned by source IP", async () => {
+		// Endpoint buckets remain independent, and an exhausted attacker bucket
+		// does not prevent a different source from using the MFA endpoint.
 		const attacker = makeClient("203.0.113.66");
 		for (let i = 0; i < 9; i++) {
 			await attacker.mfaAuth.mfaResetLink({ email: `junk${i}@example.com` });
@@ -102,6 +97,6 @@ describe("rateLimit partitioning (GHSA-5p34-fh6h-7892)", () => {
 		}
 
 		console.info("mfa victim outcome:", victimCode);
-		expect(victimCode).toBe("TOO_MANY_REQUESTS");
+		expect(victimCode).toBe("allowed");
 	});
 });

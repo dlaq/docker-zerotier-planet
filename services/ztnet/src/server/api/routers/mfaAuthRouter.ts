@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import { sendMailWithTemplate } from "~/utils/mail";
 import { TOTP_MFA_TOKEN_SECRET, generateInstanceSecret } from "~/utils/encryption";
 import { ErrorCode } from "~/utils/errorCode";
-import rateLimit from "~/utils/rateLimit";
+import rateLimit, { getClientRateLimitIdentifier } from "~/utils/rateLimit";
 import { TRPCError } from "@trpc/server";
 import bcrypt from "bcryptjs";
 import { MailTemplateKey } from "~/utils/enums";
@@ -73,6 +73,7 @@ export const mfaAuthRouter = createTRPCRouter({
 					ctx.res,
 					GENERAL_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.MFA_VALIDATE_TOKEN,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				return { error: ErrorCode.TooManyRequests };
@@ -113,6 +114,7 @@ export const mfaAuthRouter = createTRPCRouter({
 					ctx.res,
 					GENERAL_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.MFA_RESET_LINK,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({
@@ -181,6 +183,7 @@ export const mfaAuthRouter = createTRPCRouter({
 					ctx.res,
 					GENERAL_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.MFA_RESET_VALIDATION,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({
@@ -286,6 +289,7 @@ export const mfaAuthRouter = createTRPCRouter({
 					ctx.res,
 					GENERAL_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.MFA_VALIDATE_RECOVERY,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({

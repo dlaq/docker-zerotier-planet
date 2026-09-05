@@ -16,6 +16,7 @@ import { sendMailWithTemplate } from "~/utils/mail";
 import { MailTemplateKey } from "~/utils/enums";
 import { parse } from "cookie";
 import { randomBytes } from "crypto";
+import { passwordMeetsPolicy, passwordPolicyMessage } from "~/utils/passwordPolicy";
 
 const MAX_FAILED_ATTEMPTS = Math.min(
 	20,
@@ -170,6 +171,18 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 		throw new APIError("FORBIDDEN", {
 			message: "Email/password authentication is disabled. Please use OAuth.",
 		});
+	}
+
+	// The normal UI registers through the tRPC router, but Better Auth also
+	// exposes a direct /sign-up/email endpoint.  Enforce the same policy there
+	// so a caller cannot bypass the configurable password requirements by using
+	// the underlying endpoint directly.
+	if (ctx.path === "/sign-up/email") {
+		const rawPassword = (ctx.body as Record<string, unknown>)?.password;
+		if (typeof rawPassword === "string" && !passwordMeetsPolicy(rawPassword)) {
+			throw new APIError("BAD_REQUEST", { message: passwordPolicyMessage() });
+		}
+		return;
 	}
 
 	if (ctx.path !== "/sign-in/email") return;

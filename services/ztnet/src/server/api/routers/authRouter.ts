@@ -21,13 +21,14 @@ import {
 import { isRunningInDocker } from "~/utils/docker";
 import { Invitation, User, UserDevice, UserOptions } from "@prisma/client";
 import { validateOrganizationToken } from "../services/organizationAuthService";
-import rateLimit from "~/utils/rateLimit";
+import rateLimit, { getClientRateLimitIdentifier } from "~/utils/rateLimit";
 import { ErrorCode } from "~/utils/errorCode";
 import { MailTemplateKey } from "~/utils/enums";
-import { emailSchema, mediumPassword, passwordSchema } from "./_schema";
+import { emailSchema, passwordSchema } from "./_schema";
 import { upsertCredentialAccount } from "~/server/api/services/credentialAccountService";
 import { DEVICE_SALT_COOKIE_NAME } from "~/utils/devices";
 import { normalizeEmail } from "~/utils/email";
+import { passwordMeetsPolicy, passwordPolicyMessage } from "~/utils/passwordPolicy";
 
 // Rate limit configuration from environment variables
 // RATE_LIMIT_WINDOW: Time window in minutes (default: 10 minutes)
@@ -39,10 +40,30 @@ const GENERAL_REQUEST_LIMIT =
 	Number.parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "60", 10) || 60;
 const SHORT_REQUEST_LIMIT =
 	Number.parseInt(process.env.RATE_LIMIT_MAX_REQUESTS_SHORT || "10", 10) || 10;
+const REGISTER_RATE_LIMIT_WINDOW_MS =
+	(Number.parseInt(
+		process.env.ZTPLANET_REGISTER_RATE_LIMIT_WINDOW ||
+			process.env.RATE_LIMIT_WINDOW ||
+			"10",
+		10,
+	) || 10) *
+	60 *
+	1000;
+const REGISTER_REQUEST_LIMIT =
+	Number.parseInt(
+		process.env.ZTPLANET_REGISTER_RATE_LIMIT_MAX ||
+			process.env.RATE_LIMIT_MAX_REQUESTS ||
+			"60",
+		10,
+	) || 60;
 
 const limiter = rateLimit({
 	interval: RATE_LIMIT_WINDOW_MS,
 	uniqueTokenPerInterval: 1000,
+});
+const registerLimiter = rateLimit({
+	interval: REGISTER_RATE_LIMIT_WINDOW_MS,
+	uniqueTokenPerInterval: 10000,
 });
 
 // Rate limit tokens - each endpoint should have its own token to prevent
@@ -61,7 +82,7 @@ export const authRouter = createTRPCRouter({
 		.input(
 			z.object({
 				email: emailSchema(),
-				password: passwordSchema("password does not meet the requirements!"),
+				password: passwordSchema(passwordPolicyMessage()),
 				name: z.string().min(3, "Name must contain at least 3 character(s)").max(40),
 				expiresAt: z.string().optional(),
 				ztnetInvitationCode: z.string().optional(),
@@ -72,10 +93,11 @@ export const authRouter = createTRPCRouter({
 		.mutation(async ({ ctx, input }) => {
 			// add rate limit
 			try {
-				await limiter.check(
+				await registerLimiter.check(
 					ctx.res,
-					GENERAL_REQUEST_LIMIT,
+					REGISTER_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.REGISTER_USER,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({
@@ -193,10 +215,10 @@ export const authRouter = createTRPCRouter({
 
 			// hash password
 			if (password) {
-				if (!mediumPassword.test(password))
+				if (!passwordMeetsPolicy(password))
 					throw new TRPCError({
 						code: "BAD_REQUEST",
-						message: "Password does not meet the requirements!",
+						message: passwordPolicyMessage(),
 						// optional: pass the original error to retain stack trace
 						// cause: theError,
 					});
@@ -412,14 +434,12 @@ export const authRouter = createTRPCRouter({
 			z.object({
 				email: emailSchema().optional(),
 				password: z.string().optional(),
-				newPassword: passwordSchema("New Password does not meet the requirements!")
+				newPassword: passwordSchema(passwordPolicyMessage())
 					// passwordSchema is already optional; guard the trim so an omitted
 					// field (e.g. updating only the name) doesn't call .trim() on undefined.
 					.transform((val) => val?.trim())
 					.optional(),
-				repeatNewPassword: passwordSchema(
-					"Repeat NewPassword does not meet the requirements!",
-				)
+				repeatNewPassword: passwordSchema(passwordPolicyMessage())
 					.transform((val) => val?.trim())
 					.optional(),
 				name: z.string().nonempty().max(40).optional(),
@@ -463,10 +483,10 @@ export const authRouter = createTRPCRouter({
 					});
 				}
 
-				if (!mediumPassword.test(input.newPassword))
+				if (!passwordMeetsPolicy(input.newPassword))
 					throw new TRPCError({
 						code: "BAD_REQUEST",
-						message: "Password does not meet the requirements!",
+						message: passwordPolicyMessage(),
 						// optional: pass the original error to retain stack trace
 						// cause: theError,
 					});
@@ -533,6 +553,7 @@ export const authRouter = createTRPCRouter({
 						ctx.res,
 						GENERAL_REQUEST_LIMIT,
 						RATE_LIMIT_TOKENS.VALIDATE_RESET_TOKEN,
+						getClientRateLimitIdentifier(ctx.req),
 					);
 				} catch {
 					throw new TRPCError({
@@ -570,6 +591,7 @@ export const authRouter = createTRPCRouter({
 					ctx.res,
 					SHORT_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.PASSWORD_RESET_LINK,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({
@@ -626,8 +648,8 @@ export const authRouter = createTRPCRouter({
 		.input(
 			z.object({
 				token: z.string({ error: "Token is required!" }),
-				password: passwordSchema("password does not meet the requirements!"),
-				newPassword: passwordSchema("password does not meet the requirements!"),
+				password: passwordSchema(passwordPolicyMessage()),
+				newPassword: passwordSchema(passwordPolicyMessage()),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -637,6 +659,7 @@ export const authRouter = createTRPCRouter({
 					ctx.res,
 					SHORT_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.CHANGE_PASSWORD,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({
@@ -698,6 +721,7 @@ export const authRouter = createTRPCRouter({
 				ctx.res,
 				SHORT_REQUEST_LIMIT,
 				RATE_LIMIT_TOKENS.SEND_EMAIL_VERIFICATION,
+				getClientRateLimitIdentifier(ctx.req),
 			);
 		} catch {
 			throw new TRPCError({
@@ -760,6 +784,7 @@ export const authRouter = createTRPCRouter({
 					ctx.res,
 					SHORT_REQUEST_LIMIT,
 					RATE_LIMIT_TOKENS.EMAIL_VERIFICATION_LINK,
+					getClientRateLimitIdentifier(ctx.req),
 				);
 			} catch {
 				throw new TRPCError({
