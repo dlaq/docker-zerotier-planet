@@ -582,7 +582,11 @@ class Agent:
         if not config["relayServer"]["enabled"]:
             subprocess.run(compose + ["stop", "relay"], check=False, timeout=60)
             subprocess.run([str(firewall), "remove"], check=False, timeout=30)
-        selected = services or ["gateway"]
+        # Explicitly naming a Compose service starts it even when its profile is
+        # disabled. A relay-off change must stop it, never include it in `up`.
+        selected = [name for name in services if name != "relay" or config["relayServer"]["enabled"]]
+        if not selected:
+            return {"mode": "docker", "services": [], "running": []}
         completed = subprocess.run(
             compose + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "120", "--no-deps", "--force-recreate", *selected],
             check=False,
@@ -680,7 +684,7 @@ class Agent:
                 "tls": listener["tlsMode"],
                 "authentication": "session + administrator role",
                 "allowedSources": listener["allowedCidrs"] or ["any"],
-                "health": "listening" if listener_is_present(actual_listeners, "tcp", listener["port"]) else "not-observed",
+                "health": "listening" if listener_is_present(actual_listeners, "tcp", listener["port"], listener["address"]) else "not-observed",
                 "risk": risk,
             })
         if config["zerotier"]["enabled"]:
@@ -689,7 +693,7 @@ class Agent:
                 "address": config["zerotier"]["bindAddress"], "port": config["zerotier"]["publicPort"],
                 "tls": "ZeroTier wire encryption", "authentication": "ZeroTier identity",
                 "allowedSources": ["any"],
-                "health": "listening" if listener_is_present(actual_listeners, "udp", config["zerotier"]["publicPort"]) else "not-observed",
+                "health": "listening" if listener_is_present(actual_listeners, "udp", config["zerotier"]["publicPort"], config["zerotier"]["bindAddress"]) else "not-observed",
                 "risk": "intended-public-service",
             })
         if config["controller"]["exposure"] == "direct":
@@ -698,7 +702,7 @@ class Agent:
                 "address": config["controller"]["bindAddress"], "port": config["controller"]["port"],
                 "tls": "off", "authentication": "bearer token",
                 "allowedSources": ["any"],
-                "health": "listening" if listener_is_present(actual_listeners, "tcp", config["controller"]["port"]) else "not-observed",
+                "health": "listening" if listener_is_present(actual_listeners, "tcp", config["controller"]["port"], config["controller"]["bindAddress"]) else "not-observed",
                 "risk": "high",
             })
         if config["relayServer"]["enabled"]:
@@ -708,7 +712,7 @@ class Agent:
                 "address": relay["bindAddress"], "port": relay["port"],
                 "tls": "fake TLS framing (not TLS)", "authentication": "none in protocol",
                 "allowedSources": relay["allowedSourceCidrs"] or ["any"],
-                "health": "listening" if listener_is_present(actual_listeners, "tcp", relay["port"]) else "not-observed",
+                "health": "listening" if listener_is_present(actual_listeners, "tcp", relay["port"], relay["bindAddress"]) else "not-observed",
                 "risk": "high" if not relay["allowedSourceCidrs"] else "restricted-source",
             })
         return {
@@ -814,7 +818,7 @@ class Agent:
         fixed_script = (
             "umask 027; p=/var/lib/zerotier-one/authtoken.secret; "
             "t=/var/lib/zerotier-one/.authtoken.secret.new; cat >$t; "
-            "chown root:1001 $t; chmod 0640 $t; mv -f $t $p"
+            "chown 0:1001 $t; chmod 0640 $t; mv -f $t $p"
         )
         completed = subprocess.run(
             compose + ["exec", "-T", "zerotier", "sh", "-eu", "-c", fixed_script],
@@ -858,13 +862,23 @@ def changed_services(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     return sorted(services)
 
 
-def listener_is_present(listeners: list[dict[str, str]], protocol: str, port: int) -> bool:
-    suffixes = (f":{port}", f"]:{port}")
-    return any(
-        item.get("protocol", "").lower().startswith(protocol)
-        and item.get("endpoint", "").endswith(suffixes)
-        for item in listeners
-    )
+def listener_is_present(listeners: list[dict[str, str]], protocol: str, port: int, address: str) -> bool:
+    expected = ipaddress.ip_address(address)
+    for item in listeners:
+        if not item.get("protocol", "").lower().startswith(protocol):
+            continue
+        host, separator, actual_port = item.get("endpoint", "").rpartition(":")
+        if not separator or actual_port != str(port):
+            continue
+        try:
+            actual = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            # `ss` may print `*` for a dual-stack socket; its address family
+            # cannot be inferred reliably, so leave it unconfirmed.
+            continue
+        if actual.version == expected.version and (actual == expected or actual.is_unspecified):
+            return True
+    return False
 
 
 def effective_management_listeners(config: dict[str, Any]) -> list[dict[str, Any]]:

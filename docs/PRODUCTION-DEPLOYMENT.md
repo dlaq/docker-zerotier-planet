@@ -253,6 +253,7 @@ services:
     environment:
       DATABASE_URL: "postgresql://ztnet:${ZTPLANET_DB_PASSWORD:?请设置64位十六进制数据库密码}@postgres:5432/ztnet?schema=public"
       NEXTAUTH_URL: "https://${MANAGEMENT_HOST:-localhost}:${MANAGEMENT_PORT:-3443}"
+      MANAGEMENT_HOST: "${MANAGEMENT_HOST-}"
       NEXTAUTH_URL_INTERNAL: http://ztnet:3000
       NEXTAUTH_SECRET: ${ZTPLANET_AUTH_SECRET:?请设置至少64位认证密钥}
       ZT_ADDR: http://zerotier:9993
@@ -265,6 +266,9 @@ services:
       ZTPLANET_PASSWORD_MIN_LENGTH: "${ZTPLANET_PASSWORD_MIN_LENGTH:-14}"
       ZTPLANET_PASSWORD_MIN_CLASSES: "${ZTPLANET_PASSWORD_MIN_CLASSES:-2}"
       ZTPLANET_TRUST_PROXY: "${ZTPLANET_TRUST_PROXY:-true}"
+      # Better Auth 也需要知道网关所在的固定代理网段，才能正确按真实
+      # 客户端 IP 限制登录；更换反代时改成该反代的精确 IP/CIDR，禁止使用 *。
+      ZTPLANET_TRUSTED_PROXIES: "${ZTPLANET_TRUSTED_PROXIES:-172.31.255.0/24}"
       ZTPLANET_REGISTER_RATE_LIMIT_WINDOW: "${ZTPLANET_REGISTER_RATE_LIMIT_WINDOW:-10}"
       ZTPLANET_REGISTER_RATE_LIMIT_MAX: "${ZTPLANET_REGISTER_RATE_LIMIT_MAX:-60}"
       RATE_LIMIT_WINDOW: "${RATE_LIMIT_WINDOW:-10}"
@@ -434,6 +438,12 @@ services:
     pids_limit: 128
     mem_limit: 256m
     cpus: 0.5
+    healthcheck:
+      test: ["CMD", "/usr/bin/caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   relay:
     image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.0@sha256:01b1391d565d15dff7486cd8a1631781acd1d354d92e77a188a3f17078a8dc34
@@ -441,7 +451,8 @@ services:
     restart: unless-stopped
     environment:
       RELAY_LISTEN: 0.0.0.0:4443
-      RELAY_METRICS_LISTEN: ""
+      # 仅绑定 relay 专用网络地址，供健康检查和配置代理读取；不要映射到宿主机。
+      RELAY_METRICS_LISTEN: "${RELAY_METRICS_LISTEN:-172.31.254.2:9090}"
       RELAY_ALLOWED_CIDRS: ${RELAY_ALLOWED_CIDRS:-}
       RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-128}
       RELAY_MAX_CONNECTIONS_PER_IP: ${RELAY_MAX_CONNECTIONS_PER_IP:-4}
@@ -641,7 +652,8 @@ Caddy 会自动创建并持久化本实例独有的内部 CA 和自签名证书�
 预期现象。第一个注册账户成为管理员，随后公开注册自动关闭。
 
 默认密码规则为 14-128 位，且必须包含小写字母、大写字母、数字中的至少两类。个人使用
-可以在 `.env` 或 1Panel 环境变量中调整（修改后重启 `ztnet`）：
+可以在 `.env` 或 1Panel 环境变量中调整（修改后必须“重建/重新创建” `ztnet`，
+仅“重启”不会加载新的环境变量）：
 
 ```env
 ZTPLANET_PASSWORD_MIN_LENGTH=8

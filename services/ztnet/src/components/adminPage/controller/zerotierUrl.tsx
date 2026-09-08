@@ -55,9 +55,7 @@ const ZerotierUrl = () => {
 								})}
 							</span>
 						</div>
-					) : (
-						"nope"
-					)}
+					) : null}
 				</p>
 
 				<InputField
@@ -78,7 +76,6 @@ const ZerotierUrl = () => {
 					submitHandler={(params) =>
 						new Promise((resolve) => {
 							setZtOptions({
-								localControllerSecret: me?.options?.localControllerSecret,
 								...params,
 							});
 							resolve(true);
@@ -96,8 +93,10 @@ const ZerotierUrl = () => {
 						{
 							name: "localControllerSecret",
 							type: "text",
-							placeholder: me?.options?.localControllerSecret || "********",
-							value: me?.options?.localControllerSecret || "",
+							placeholder: me?.options?.localControllerSecretConfigured
+								? "******** (已设置)"
+								: "********",
+							value: "",
 						},
 					]}
 					submitHandler={(params) =>

@@ -62,7 +62,15 @@ export const mfaAuthRouter = createTRPCRouter({
 
 			try {
 				const secret = generateInstanceSecret(TOTP_MFA_TOKEN_SECRET);
-				decoded = jwt.verify(token, secret) as { id: string; email: string };
+				const decodedValue = jwt.verify(token, secret);
+				if (
+					typeof decodedValue === "string" ||
+					typeof decodedValue.id !== "string" ||
+					typeof decodedValue.email !== "string"
+				) {
+					return { error: ErrorCode.InvalidToken };
+				}
+				decoded = decodedValue as { id: string; email: string };
 			} catch {
 				return { error: ErrorCode.InvalidToken };
 			}
@@ -194,7 +202,18 @@ export const mfaAuthRouter = createTRPCRouter({
 			// Verify the token
 			try {
 				const secret = generateInstanceSecret(TOTP_MFA_TOKEN_SECRET);
-				const decoded = jwt.verify(token, secret) as { id: string; email: string };
+				const decodedValue = jwt.verify(token, secret);
+				if (
+					typeof decodedValue === "string" ||
+					typeof decodedValue.id !== "string" ||
+					typeof decodedValue.email !== "string"
+				) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "Something went wrong, please try again",
+					});
+				}
+				const decoded = decodedValue as { id: string; email: string };
 
 				if (normalizeEmail(decoded.email) !== normalizeEmail(email)) {
 					throw new TRPCError({
@@ -215,7 +234,7 @@ export const mfaAuthRouter = createTRPCRouter({
 					},
 				});
 
-				if (!user || !user.twoFactorEnabled) {
+				if (!user || !user.twoFactorEnabled || !user.hash) {
 					throw new TRPCError({
 						code: "UNAUTHORIZED",
 						message: "Something went wrong, please try again",
@@ -244,19 +263,61 @@ export const mfaAuthRouter = createTRPCRouter({
 					});
 				}
 
-				// Remove the used recovery code
-				const updatedRecoveryCodes = user.twoFactorRecoveryCodes.filter(
-					async (hashedCode) => !(await bcrypt.compare(recoveryCode, hashedCode)),
-				);
-
-				// Disable 2FA
-				await ctx.prisma.user.update({
-					where: { id: user.id },
-					data: {
-						twoFactorEnabled: false,
-						twoFactorSecret: null,
-						twoFactorRecoveryCodes: updatedRecoveryCodes,
-					},
+				// Consume the recovery code and disable 2FA atomically. The optimistic
+				// scalar-list predicate makes a concurrent request lose the race instead
+				// of consuming the same code twice. An async predicate passed to
+				// Array.filter would always be truthy and never remove any code.
+				await ctx.prisma.$transaction(async (tx) => {
+					const lockedUser = await tx.user.findUnique({
+						where: { id: user.id },
+						select: {
+							twoFactorEnabled: true,
+							twoFactorRecoveryCodes: true,
+						},
+					});
+					if (!lockedUser?.twoFactorEnabled) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "Something went wrong, please try again",
+						});
+					}
+					let matchedIndex = -1;
+					for (let index = 0; index < lockedUser.twoFactorRecoveryCodes.length; index++) {
+						if (
+							await bcrypt.compare(recoveryCode, lockedUser.twoFactorRecoveryCodes[index])
+						) {
+							matchedIndex = index;
+							break;
+						}
+					}
+					if (matchedIndex < 0) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "Something went wrong, please try again",
+						});
+					}
+					const updatedRecoveryCodes = [...lockedUser.twoFactorRecoveryCodes];
+					updatedRecoveryCodes.splice(matchedIndex, 1);
+					const updated = await tx.user.updateMany({
+						where: {
+							id: user.id,
+							twoFactorEnabled: true,
+							twoFactorRecoveryCodes: {
+								equals: lockedUser.twoFactorRecoveryCodes,
+							},
+						},
+						data: {
+							twoFactorEnabled: false,
+							twoFactorSecret: null,
+							twoFactorRecoveryCodes: updatedRecoveryCodes,
+						},
+					});
+					if (updated.count !== 1) {
+						throw new TRPCError({
+							code: "UNAUTHORIZED",
+							message: "Something went wrong, please try again",
+						});
+					}
 				});
 
 				return {
@@ -299,7 +360,15 @@ export const mfaAuthRouter = createTRPCRouter({
 			}
 			try {
 				const secret = generateInstanceSecret(TOTP_MFA_TOKEN_SECRET);
-				const decoded = jwt.verify(token, secret) as { id: string; email: string };
+				const decodedValue = jwt.verify(token, secret);
+				if (
+					typeof decodedValue === "string" ||
+					typeof decodedValue.id !== "string" ||
+					typeof decodedValue.email !== "string"
+				) {
+					throwError(ErrorCode.InvalidToken);
+				}
+				const decoded = decodedValue as { id: string; email: string };
 
 				const user = await ctx.prisma.user.findFirst({
 					where: {

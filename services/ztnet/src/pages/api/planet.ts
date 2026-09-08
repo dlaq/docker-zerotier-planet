@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from "next";
 import fs from "fs";
 import path from "path";
 import { ZT_FOLDER } from "~/utils/ztApi";
-import { auth } from "~/lib/auth";
+import { getActiveSession } from "~/lib/activeSession";
 import { fromNodeHeaders } from "better-auth/node";
 
 export const config = {
@@ -12,7 +12,9 @@ export const config = {
 };
 
 export default async (req: NextApiRequest, res: NextApiResponse) => {
-	const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+	const session = await getActiveSession({
+		headers: fromNodeHeaders(req.headers),
+	});
 	if (!session?.user || session.user.role !== "ADMIN") {
 		res.status(401).json({ message: "Administrator authentication required" });
 		return;
@@ -36,7 +38,10 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
 			const fileStream = fs.createReadStream(filePath);
 
 			// Set the headers
-			res.setHeader("Content-Disposition", "attachment; filename=planet.custom");
+			res.setHeader(
+				"Content-Disposition",
+				"attachment; filename=planet.custom",
+			);
 			res.setHeader("Content-Type", "application/octet-stream");
 
 			// Pipe the read stream to the response

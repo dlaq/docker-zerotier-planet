@@ -2,20 +2,13 @@ import { type ReactElement } from "react";
 import { LayoutAuthenticated } from "~/components/layouts/layout";
 import { api } from "~/utils/api";
 import { useTranslations } from "next-intl";
-import { User, UserOptions } from "@prisma/client";
 import MenuSectionDividerWrapper from "~/components/shared/menuSectionDividerWrapper";
-
-interface UserExtended extends User {
-	options: UserOptions & {
-		deAuthorizeWarning: boolean;
-	};
-}
 
 const UserNetworkSetting = () => {
 	const t = useTranslations("userSettings");
 	const { mutate: updateSettings } = api.auth.updateUserOptions.useMutation();
 
-	const { data: me, refetch: refetchMe } = api.auth.me.useQuery<UserExtended>();
+	const { data: me, refetch: refetchMe } = api.auth.me.useQuery();
 
 	return (
 		<main className="flex w-full flex-col justify-center space-y-10 bg-base-100 p-5 sm:p-3 xl:w-6/12">

@@ -275,8 +275,11 @@ const Account = () => {
 						{
 							name: "ztCentralApiKey",
 							type: "text",
-							placeholder: "api key",
-							value: me?.options?.ztCentralApiKey,
+							placeholder: me?.options?.ztCentralApiKeyConfigured
+								? "****** (已设置)"
+								: "api key",
+							// The API never sends the existing key back to the browser.
+							value: "",
 						},
 					]}
 					submitHandler={(params) => {

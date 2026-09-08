@@ -12,11 +12,16 @@
  *     blocked-user-can-still-sign-in-via-OAuth cases are what these tests pin down.
  */
 
-import { onSessionCreated, onUserCreateBefore } from "~/lib/auth";
+import {
+	onSessionCreated,
+	onUserCreateAfter,
+	onUserCreateBefore,
+} from "~/lib/auth";
 import { prisma } from "~/server/db";
 
 jest.mock("~/server/db", () => ({
 	prisma: {
+		$transaction: jest.fn(),
 		user: {
 			findUnique: jest.fn(),
 			update: jest.fn(),
@@ -84,8 +89,16 @@ describe("onUserCreateBefore", () => {
 		expect(result.data.userGroupId).toBe(42);
 	});
 
-	describe("OAuth flow gating", () => {
+		describe("OAuth flow gating", () => {
 		const oauthCtx = { path: "/oauth2/callback/oauth" };
+
+		it("also gates the Better Auth generic OAuth /callback/:id endpoint", async () => {
+			process.env.OAUTH_ALLOW_NEW_USERS = "false";
+			await expect(
+				onUserCreateBefore(baseUser, { path: "/callback/oauth" }),
+			).rejects.toThrow(/registration_disabled/);
+			expect(prisma.user.count).not.toHaveBeenCalled();
+		});
 
 		it("blocks new OAuth users when OAUTH_ALLOW_NEW_USERS=false", async () => {
 			process.env.OAUTH_ALLOW_NEW_USERS = "false";
@@ -145,6 +158,45 @@ describe("onUserCreateBefore", () => {
 				onUserCreateBefore(baseUser, { path: "/sign-up/email" }),
 			).resolves.toBeTruthy();
 		});
+	});
+});
+
+describe("onUserCreateAfter", () => {
+	const transaction = prisma.$transaction as jest.Mock;
+	const tx = {
+		$executeRaw: jest.fn(),
+		user: {
+			findFirst: jest.fn(),
+			update: jest.fn(),
+		},
+	};
+
+	beforeEach(() => {
+		transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) =>
+			callback(tx),
+		);
+	});
+
+	it("promotes exactly one committed OAuth user under an advisory lock", async () => {
+		tx.user.findFirst.mockResolvedValue(null);
+		await onUserCreateAfter({ id: "oauth-user" }, { path: "/callback/oauth" });
+		expect(tx.$executeRaw).toHaveBeenCalled();
+		expect(tx.user.update).toHaveBeenCalledWith({
+			where: { id: "oauth-user" },
+			data: { role: "ADMIN" },
+		});
+	});
+
+	it("leaves later OAuth users as USER when an admin already exists", async () => {
+		tx.user.findFirst.mockResolvedValue({ id: "existing-admin" });
+		await onUserCreateAfter({ id: "oauth-user-2" }, { path: "/callback/oauth" });
+		expect(tx.user.update).not.toHaveBeenCalled();
+	});
+
+	it("does not run for email registration or malformed user records", async () => {
+		await onUserCreateAfter({ id: "email-user" }, { path: "/sign-up/email" });
+		await onUserCreateAfter({}, { path: "/callback/oauth" });
+		expect(transaction).not.toHaveBeenCalled();
 	});
 });
 

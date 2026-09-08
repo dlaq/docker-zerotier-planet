@@ -30,9 +30,17 @@ export const emailSchema = (invalidMessage?: string, requiredError?: string) =>
 export const mediumPassword = { test: passwordMeetsPolicy };
 
 // create a zod password schema
-export const passwordSchema = (errorMessage: string) =>
+export const passwordSchema = (errorMessage?: string) =>
 	z
 		.string()
-		.max(PASSWORD_MAX_LENGTH, { message: "Password must not exceed 128 characters" })
-		.refine(passwordMeetsPolicy, { message: errorMessage || passwordPolicyMessage() })
-		.optional();
+		.max(PASSWORD_MAX_LENGTH, {
+			message: "Password must not exceed 128 characters",
+		})
+		.superRefine((value, ctx) => {
+			if (!passwordMeetsPolicy(value)) {
+				ctx.addIssue({
+					code: "custom",
+					message: errorMessage || passwordPolicyMessage(),
+				});
+			}
+		});

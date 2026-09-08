@@ -11,6 +11,7 @@ import { test, expect, describe, beforeEach } from "@jest/globals";
 
 // Spy on the credential-account service so we can assert it was called.
 jest.mock("~/server/api/services/credentialAccountService", () => ({
+	...jest.requireActual("~/server/api/services/credentialAccountService"),
 	upsertCredentialAccount: jest.fn(),
 }));
 
@@ -63,6 +64,16 @@ const session: PartialDeep<Session> = {
 
 function makePrismaMock(user: Record<string, unknown>): PrismaClient {
 	const prismaMock = new PrismaClient();
+	prismaMock.$transaction = jest.fn(async (work) => work(prismaMock)) as never;
+	prismaMock.$executeRaw = jest.fn().mockResolvedValue(1) as never;
+	prismaMock.verification.create = jest.fn().mockResolvedValue({}) as never;
+	prismaMock.verification.findFirst = jest.fn().mockResolvedValue({}) as never;
+	prismaMock.verification.deleteMany = jest
+		.fn()
+		.mockResolvedValue({ count: 1 }) as never;
+	prismaMock.session.deleteMany = jest
+		.fn()
+		.mockResolvedValue({ count: 1 }) as never;
 	prismaMock.user.findFirst = jest.fn().mockResolvedValue(user) as never;
 	prismaMock.user.findUnique = jest.fn().mockResolvedValue(user) as never;
 	prismaMock.user.update = jest.fn().mockResolvedValue(user) as never;
@@ -77,6 +88,9 @@ function makePrismaMock(user: Record<string, unknown>): PrismaClient {
 	}) as never;
 	prismaMock.invitation.findUnique = jest.fn() as never;
 	prismaMock.invitation.update = jest.fn() as never;
+	prismaMock.invitation.updateMany = jest
+		.fn()
+		.mockResolvedValue({ count: 1 }) as never;
 	prismaMock.invitation.delete = jest.fn() as never;
 	return prismaMock;
 }
@@ -87,7 +101,7 @@ describe("auth router password mutations sync Account.password", () => {
 		mockedUpsert.mockResolvedValue(undefined);
 	});
 
-	test("auth.update writes the new hash to Account.password", async () => {
+	test("auth.update preserves password whitespace while syncing Account.password", async () => {
 		const oldHash = bcrypt.hashSync("OldPassword123!", 10);
 		const prisma = makePrismaMock({
 			id: "user_1",
@@ -108,8 +122,8 @@ describe("auth router password mutations sync Account.password", () => {
 
 		await caller.auth.update({
 			password: "OldPassword123!",
-			newPassword: "NewPassword123!",
-			repeatNewPassword: "NewPassword123!",
+			newPassword: " NewPassword123! ",
+			repeatNewPassword: " NewPassword123! ",
 		});
 
 		expect(upsertCredentialAccount).toHaveBeenCalledTimes(1);
@@ -117,13 +131,21 @@ describe("auth router password mutations sync Account.password", () => {
 		expect(userId).toBe("user_1");
 		expect(typeof hashArg).toBe("string");
 		// Confirm the synced hash actually validates the new password.
-		expect(bcrypt.compareSync("NewPassword123!", hashArg as string)).toBe(true);
+		expect(bcrypt.compareSync(" NewPassword123! ", hashArg as string)).toBe(
+			true,
+		);
+		expect(bcrypt.compareSync("NewPassword123!", hashArg as string)).toBe(
+			false,
+		);
 	});
 
 	test("auth.changePasswordFromJwt writes the new hash to Account.password", async () => {
 		// Build a valid token signed by the same secret the router will verify with.
 		const jwt = await import("jsonwebtoken");
-		const token = jwt.sign({ id: "user_1" }, "secret");
+		const token = jwt.sign(
+			{ id: "user_1", email: "test@example.com" },
+			"secret",
+		);
 
 		const oldHash = bcrypt.hashSync("OldPassword123!", 10);
 		const prisma = makePrismaMock({
@@ -151,6 +173,20 @@ describe("auth router password mutations sync Account.password", () => {
 		const [userId, hashArg] = mockedUpsert.mock.calls[0];
 		expect(userId).toBe("user_1");
 		expect(bcrypt.compareSync("NewPassword123!", hashArg as string)).toBe(true);
+		expect(prisma.session.deleteMany).toHaveBeenCalledWith({
+			where: { userId: "user_1" },
+		});
+		(prisma.verification.deleteMany as jest.Mock).mockResolvedValue({
+			count: 0,
+		});
+		await expect(
+			caller.auth.changePasswordFromJwt({
+				token,
+				password: "NewPassword123!",
+				newPassword: "NewPassword123!",
+			}),
+		).rejects.toThrow();
+		expect(upsertCredentialAccount).toHaveBeenCalledTimes(1);
 	});
 
 	test("auth.register writes the credential Account row for the new user", async () => {

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Server } from "socket.io";
 import { Role } from "@prisma/client";
-import { auth } from "~/lib/auth";
+import { getActiveSession } from "~/lib/activeSession";
 import { fromNodeHeaders } from "better-auth/node";
 import { prisma } from "~/server/db";
 import { checkNetworkAccess } from "~/utils/networkAccess";
@@ -17,8 +17,13 @@ interface SocketIoExtension {
 }
 
 export type NextApiResponseWithSocketIo = NextApiResponse & SocketIoExtension;
-const SocketHandler = async (req: NextApiRequest, res: NextApiResponseWithSocketIo) => {
-	const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+const SocketHandler = async (
+	req: NextApiRequest,
+	res: NextApiResponseWithSocketIo,
+) => {
+	const session = await getActiveSession({
+		headers: fromNodeHeaders(req.headers),
+	});
 	if (!session) {
 		res.status(401).json({ message: "Authorization Error" });
 		return;
@@ -39,7 +44,7 @@ const SocketHandler = async (req: NextApiRequest, res: NextApiResponseWithSocket
 		// then enforce per-network access again at subscribe time (defense in depth).
 		io.use(async (socket, next) => {
 			try {
-				const s = await auth.api.getSession({
+				const s = await getActiveSession({
 					headers: fromNodeHeaders(socket.handshake.headers),
 				});
 				if (!s) return next(new Error("unauthorized"));

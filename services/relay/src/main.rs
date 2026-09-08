@@ -241,22 +241,35 @@ impl State {
     }
 
     fn reserve(&self, ip: IpAddr, cfg: &Config) -> bool {
-        if self.metrics.active.load(Ordering::Acquire) >= cfg.max_connections {
-            self.metrics
-                .rejected_capacity
-                .fetch_add(1, Ordering::Relaxed);
-            return false;
+        // Reserve the global slot with CAS. A load followed by fetch_add lets
+        // concurrent accepts cross the configured ceiling during a flood.
+        loop {
+            let active = self.metrics.active.load(Ordering::Acquire);
+            if active >= cfg.max_connections {
+                self.metrics
+                    .rejected_capacity
+                    .fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+            if self
+                .metrics
+                .active
+                .compare_exchange(active, active + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
+            }
         }
         let mut counts = self.per_ip.lock().unwrap_or_else(|e| e.into_inner());
         let count = counts.entry(ip).or_default();
         if *count >= cfg.max_connections_per_ip {
+            self.metrics.active.fetch_sub(1, Ordering::AcqRel);
             self.metrics
                 .rejected_capacity
                 .fetch_add(1, Ordering::Relaxed);
             return false;
         }
         *count += 1;
-        self.metrics.active.fetch_add(1, Ordering::AcqRel);
         self.metrics.accepted.fetch_add(1, Ordering::Relaxed);
         true
     }
@@ -549,9 +562,11 @@ fn relay_requests(
             state.metrics.rejected_rate.fetch_add(1, Ordering::Relaxed);
             continue;
         }
-        udp.send_to(payload, destination)?;
         {
+            // Keep the reply reader behind this lock until the successful send
+            // is recorded. A fast UDP reply must not race its allowlist entry.
             let mut credits = destinations.lock().unwrap_or_else(|e| e.into_inner());
+            udp.send_to(payload, destination)?;
             let credit = credits.entry(destination).or_default();
             let additional = (payload.len() as u64).saturating_mul(4).max(512);
             *credit = credit.saturating_add(additional).min(MAX_RESPONSE_CREDIT);
@@ -581,9 +596,25 @@ fn read_exact_deadline(
 ) -> io::Result<()> {
     let mut offset = 0;
     while offset < buffer.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "frame deadline exceeded",
+            ));
+        }
+        // Bound each read by the remaining absolute deadline, including reads
+        // that keep returning one byte before the socket's timeout expires.
+        stream.set_read_timeout(Some(remaining.min(Duration::from_secs(1))))?;
         match stream.read(&mut buffer[offset..]) {
             Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
             Ok(read) => {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "frame deadline exceeded",
+                    ));
+                }
                 offset += read;
             }
             Err(error)
@@ -699,6 +730,7 @@ fn serve_metrics(address: SocketAddr, state: Arc<State>) {
     };
     for mut stream in listener.incoming().flatten() {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
         let mut request = [0u8; 1024];
         let length = stream.read(&mut request).unwrap_or(0);
         let request_line = String::from_utf8_lossy(&request[..length]);
@@ -724,6 +756,37 @@ fn serve_metrics(address: SocketAddr, state: Arc<State>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expired_deadline_rejects_even_buffered_data() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut sender = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut receiver, _) = listener.accept().unwrap();
+        sender.write_all(b"already buffered").unwrap();
+        let error = read_exact_deadline(&mut receiver, &mut [0u8; 1], Instant::now()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn continuous_trickle_cannot_extend_frame_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut sender = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut receiver, _) = listener.accept().unwrap();
+        let writer = thread::spawn(move || {
+            for _ in 0..20 {
+                if sender.write_all(&[1]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let start = Instant::now();
+        let result = read_exact_until(&mut receiver, &mut [0u8; 20], Duration::from_millis(100));
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < Duration::from_millis(350));
+        drop(receiver);
+        writer.join().unwrap();
+    }
 
     #[test]
     fn cidr_matching_is_exact() {
@@ -760,6 +823,32 @@ mod tests {
         let list = vec![Ipv4Cidr::from_str("203.0.113.0/24").unwrap()];
         assert!(source_allowed("203.0.113.2".parse().unwrap(), &list));
         assert!(!source_allowed("198.51.100.2".parse().unwrap(), &list));
+    }
+
+    #[test]
+    fn connection_reservation_never_crosses_global_limit() {
+        let state = State::new();
+        let cfg = Config {
+            listen: "127.0.0.1:4443".parse().unwrap(),
+            metrics_listen: None,
+            allowed_sources: vec![],
+            max_connections: 1,
+            max_connections_per_ip: 4,
+            handshake_timeout: Duration::from_secs(1),
+            idle_timeout: Duration::from_secs(1),
+            packets_per_second: 1,
+            bytes_per_second: 1,
+            global_packets_per_second: 1,
+            global_bytes_per_second: 1,
+            max_destinations: 1,
+            min_destination_port: 1025,
+            max_frame_len: DEFAULT_MAX_FRAME_LEN,
+        };
+        let ip = "198.51.100.20".parse().unwrap();
+        assert!(state.reserve(ip, &cfg));
+        assert!(!state.reserve("198.51.100.21".parse().unwrap(), &cfg));
+        state.release(ip);
+        assert!(state.reserve("198.51.100.21".parse().unwrap(), &cfg));
     }
 
     #[test]

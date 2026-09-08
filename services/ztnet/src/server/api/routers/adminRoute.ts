@@ -1,5 +1,6 @@
 import { createTRPCRouter, adminRoleProtectedRoute } from "~/server/api/trpc";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import * as ztController from "~/utils/ztApi";
 import { mailTemplateMap, sendMailWithTemplate } from "~/utils/mail";
 import { type GlobalOptions, Role } from "@prisma/client";
@@ -10,7 +11,7 @@ import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import type { WorldConfig } from "~/types/worldConfig";
 import axios from "axios";
-import { updateLocalConf } from "~/utils/planet";
+import { extractEndpointPorts, updateLocalConf } from "~/utils/planet";
 import jwt from "jsonwebtoken";
 import { networkRouter } from "./networkRouter";
 import { decrypt, encrypt, generateInstanceSecret } from "~/utils/encryption";
@@ -25,7 +26,11 @@ import path from "node:path";
 import archiver from "archiver";
 import { BackupMetadata } from "~/types/backupRestore";
 import { checkAndDeactivateExpiredUsers } from "~/cronTasks";
-import { emailSchema } from "./_schema";
+import { emailSchema, passwordSchema } from "./_schema";
+import {
+	upsertCredentialAccount,
+	withAccountTransaction,
+} from "~/server/api/services/credentialAccountService";
 
 type WithError<T> = T & { error?: boolean; message?: string };
 type GlobalOptionsResponse = WithError<Omit<GlobalOptions, "smtpPassword">> & {
@@ -55,6 +60,9 @@ export const adminRouter = createTRPCRouter({
 					id: input.id,
 				},
 			});
+			if (!user) {
+				throwError("User not found", "NOT_FOUND");
+			}
 			if (user.role === "ADMIN") {
 				throwError("You can't change the status of admin users");
 			}
@@ -85,6 +93,9 @@ export const adminRouter = createTRPCRouter({
 					id: input.id,
 				},
 			});
+			if (!user) {
+				throwError("User not found", "NOT_FOUND");
+			}
 
 			if (user.role === "ADMIN") {
 				throwError("You can't delete admin users");
@@ -99,9 +110,15 @@ export const adminRouter = createTRPCRouter({
 
 			// delete user networks
 			const caller = networkRouter.createCaller(ctx);
-			for (const network of userNetworks) {
-				caller.deleteNetwork({ nwid: network.nwid, central: false });
-			}
+			await Promise.all(
+				userNetworks.map((network) =>
+					caller.deleteNetwork({
+						nwid: network.nwid,
+						central: false,
+						adminOverride: true,
+					}),
+				),
+			);
 
 			return await ctx.prisma.user.delete({
 				where: {
@@ -114,7 +131,7 @@ export const adminRouter = createTRPCRouter({
 			z.object({
 				name: z.string().min(1, "Name is required"),
 				email: emailSchema("Valid email is required"),
-				password: z.string().min(14, "Password must be at least 14 characters").max(128),
+				password: passwordSchema(),
 				role: z.nativeEnum(Role).default(Role.READ_ONLY),
 				userGroupId: z.number().optional(),
 				expiresAfterDays: z.number().optional(),
@@ -165,72 +182,70 @@ export const adminRouter = createTRPCRouter({
 				finalUserGroupId = defaultUserGroup?.id;
 			}
 
-			// Create the user
-			const newUser = await ctx.prisma.user.create({
-				data: {
-					name,
-					email,
-					hash,
-					role,
-					userGroupId: finalUserGroupId,
-					expiresAt,
-					requestChangePassword,
-					lastLogin: new Date().toISOString(),
-					options: {
-						create: {
-							localControllerUrl: isRunningInDocker()
-								? "http://zerotier:9993"
-								: "http://127.0.0.1:9993",
+			return await withAccountTransaction(ctx.prisma, async (tx) => {
+				// Verify the requested organization before creating any account rows.
+				if (organizationId) {
+					const organization = await tx.organization.findFirst({
+						where: { id: organizationId, ownerId: ctx.session.user.id },
+					});
+					if (!organization) throwError("Organization not found or access denied");
+				}
+				const newUser = await tx.user.create({
+					data: {
+						name,
+						email,
+						hash,
+						role,
+						userGroupId: finalUserGroupId,
+						expiresAt,
+						requestChangePassword,
+						lastLogin: new Date().toISOString(),
+						options: {
+							create: {
+								localControllerUrl: isRunningInDocker()
+									? "http://zerotier:9993"
+									: "http://127.0.0.1:9993",
+							},
 						},
 					},
-				},
-				select: {
-					id: true,
-					name: true,
-					email: true,
-					role: true,
-					userGroupId: true,
-					expiresAt: true,
-					requestChangePassword: true,
-					createdAt: true,
-				},
-			});
-
-			// If organization is specified, add user to organization with specified role
-			if (organizationId && organizationRole) {
-				// Verify that the organization exists and the current admin has access to it
-				const organization = await ctx.prisma.organization.findFirst({
-					where: {
-						id: organizationId,
-						ownerId: ctx.session.user.id, // Only allow adding to organizations owned by the admin
+					select: {
+						id: true,
+						name: true,
+						email: true,
+						role: true,
+						userGroupId: true,
+						expiresAt: true,
+						requestChangePassword: true,
+						createdAt: true,
 					},
 				});
 
-				if (!organization) {
-					throwError("Organization not found or access denied");
+				await upsertCredentialAccount(newUser.id, hash, tx);
+
+				// If organization is specified, add user to organization with specified role
+				if (organizationId && organizationRole) {
+					// Add the user to the organization
+					await tx.organization.update({
+						where: { id: organizationId },
+						data: {
+							users: {
+								connect: { id: newUser.id },
+							},
+						},
+					});
+
+					// Set the user's role in the organization
+					await tx.userOrganizationRole.create({
+						data: {
+							userId: newUser.id,
+							organizationId: organizationId,
+							role: organizationRole,
+						},
+					});
 				}
 
-				// Add the user to the organization
-				await ctx.prisma.organization.update({
-					where: { id: organizationId },
-					data: {
-						users: {
-							connect: { id: newUser.id },
-						},
-					},
-				});
-
-				// Set the user's role in the organization
-				await ctx.prisma.userOrganizationRole.create({
-					data: {
-						userId: newUser.id,
-						organizationId: organizationId,
-						role: organizationRole,
-					},
-				});
-			}
-
-			return newUser;
+				return newUser;
+			});
 		}),
 	getUser: adminRoleProtectedRoute
 		.input(
@@ -301,14 +316,31 @@ export const adminRouter = createTRPCRouter({
 	generateInviteLink: adminRoleProtectedRoute
 		.input(
 			z.object({
-				secret: z.string(),
-				expireTime: z.string(),
+				secret: z.string().trim().min(1).max(256),
+				expireTime: z.string().trim().min(1),
 				timesCanUse: z.string().optional(),
 				groupId: z.string().optional(),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
 			const { secret, expireTime, timesCanUse, groupId } = input;
+			if (
+				!/^\d+$/.test(expireTime) ||
+				Number(expireTime) < 1 ||
+				Number(expireTime) > 525600
+			) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Expiration must be an integer between 1 and 525600 minutes",
+				});
+			}
+			const parsedTimes = timesCanUse?.trim() ? Number(timesCanUse.trim()) : 1;
+			if (!Number.isSafeInteger(parsedTimes) || parsedTimes < 1 || parsedTimes > 100000) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Usage count must be an integer between 1 and 100000",
+				});
+			}
 
 			const token = jwt.sign({ secret }, process.env.NEXTAUTH_SECRET, {
 				expiresIn: `${expireTime}m`,
@@ -322,8 +354,8 @@ export const adminRouter = createTRPCRouter({
 					url,
 					secret,
 					groupId,
-					timesCanUse: Number.parseInt(timesCanUse) || 1,
-					expiresAt: new Date(Date.now() + Number.parseInt(expireTime) * 60 * 1000),
+					timesCanUse: parsedTimes,
+					expiresAt: new Date(Date.now() + Number(expireTime) * 60 * 1000),
 					invitedById: ctx.session.user.id,
 				},
 			});
@@ -345,10 +377,10 @@ export const adminRouter = createTRPCRouter({
 		const invitationLinks: InvitationLinkType[] = await Promise.all(
 			invite.map(async (inv) => {
 				let groupName = null;
-				if (inv.groupId) {
+				if (inv.groupId && /^\d+$/.test(inv.groupId)) {
 					const group = await ctx.prisma.userGroup.findUnique({
 						where: {
-							id: Number.parseInt(inv.groupId, 10),
+							id: Number(inv.groupId),
 						},
 					});
 					groupName = group?.name || null;
@@ -387,10 +419,14 @@ export const adminRouter = createTRPCRouter({
 					ctx,
 					network as string,
 				);
-				totalMembers += networkDetails?.members.length;
-
-				// @ts-expect-error
-				const usedIp = getNetworkClassCIDR(networkDetails?.network?.ipAssignmentPools);
+				totalMembers += networkDetails?.members?.length ?? 0;
+				const pools = (networkDetails?.network?.ipAssignmentPools ?? []).flatMap(
+					({ ipRangeStart, ipRangeEnd }) =>
+						typeof ipRangeStart === "string" && typeof ipRangeEnd === "string"
+							? [{ ipRangeStart, ipRangeEnd }]
+							: [],
+				);
+				const usedIp = getNetworkClassCIDR(pools);
 				if (usedIp[0]?.target) assignedIPs.add(usedIp[0]?.target);
 			}
 
@@ -500,7 +536,7 @@ export const adminRouter = createTRPCRouter({
 	getMailTemplates: adminRoleProtectedRoute
 		.input(
 			z.object({
-				template: z.string(),
+				template: z.nativeEnum(MailTemplateKey),
 			}),
 		)
 		.query(async ({ ctx, input }) => {
@@ -510,7 +546,26 @@ export const adminRouter = createTRPCRouter({
 				},
 			});
 
-			return JSON.parse(templates?.[input.template]) ?? mailTemplateMap[input.template]();
+			const storedTemplate = templates
+				? (templates as unknown as Record<string, unknown>)[input.template]
+				: undefined;
+			if (typeof storedTemplate === "string" && storedTemplate.trim()) {
+				try {
+					const parsed = JSON.parse(storedTemplate) as unknown;
+					if (
+						parsed &&
+						typeof parsed === "object" &&
+						typeof (parsed as { subject?: unknown }).subject === "string" &&
+						typeof (parsed as { body?: unknown }).body === "string"
+					) {
+						return parsed;
+					}
+				} catch {
+					// A malformed/custom template should fall back to the built-in one,
+					// rather than breaking the admin settings page with a 500 response.
+				}
+			}
+			return mailTemplateMap[input.template]();
 		}),
 
 	setMail: adminRoleProtectedRoute
@@ -559,8 +614,8 @@ export const adminRouter = createTRPCRouter({
 	setMailTemplates: adminRoleProtectedRoute
 		.input(
 			z.object({
-				template: z.string(),
-				type: z.string(),
+				template: z.string().max(256 * 1024),
+				type: z.nativeEnum(MailTemplateKey),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -573,7 +628,7 @@ export const adminRouter = createTRPCRouter({
 	getDefaultMailTemplate: adminRoleProtectedRoute
 		.input(
 			z.object({
-				template: z.string(),
+				template: z.nativeEnum(MailTemplateKey),
 			}),
 		)
 		.mutation(({ input }) => {
@@ -628,7 +683,10 @@ export const adminRouter = createTRPCRouter({
 				sendInBackground: false, // Wait for actual SMTP response for test emails
 			});
 
-			return { success: true, message: `Test email for ${type} sent successfully` };
+			return {
+				success: true,
+				message: `Test email for ${type} sent successfully`,
+			};
 		}),
 
 	/**
@@ -916,7 +974,9 @@ export const adminRouter = createTRPCRouter({
 						? ` ${usersInGroup.length} user(s) were automatically removed from the group.`
 						: "";
 
-				return { message: `User group successfully deleted.${removedUsersMessage}` };
+				return {
+					message: `User group successfully deleted.${removedUsersMessage}`,
+				};
 			} catch (err: unknown) {
 				if (err instanceof Error) {
 					// Log the error and throw a custom error message
@@ -945,6 +1005,9 @@ export const adminRouter = createTRPCRouter({
 					id: input.userid,
 				},
 			});
+			if (!user) {
+				throwError("User not found", "NOT_FOUND");
+			}
 
 			// do not add usergroup if admin user
 			if (user.role === "ADMIN" && input.userGroupId !== "none") {
@@ -1068,30 +1131,37 @@ export const adminRouter = createTRPCRouter({
 		.input(
 			z
 				.object({
-					plID: z.number().optional(),
+					plID: z
+						.number()
+						.int()
+						.nonnegative()
+						.max(2 ** 32 - 1)
+						.optional(),
 					plRecommend: z.boolean().default(true),
-					plBirth: z.number().optional(),
-					rootNodes: z.array(
-						z.object({
-							identity: z.string().min(1, "Identity must have a value."),
-							endpoints: z
-								.any()
-								.refine(
-									(data): data is string[] =>
-										Array.isArray(data) && data.every((item) => typeof item === "string"),
-									{
-										message: "Endpoints must be an array of strings.",
-									},
-								),
-							comments: z.string().optional(),
-						}),
-					),
+					plBirth: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+					rootNodes: z
+						.array(
+							z.object({
+								identity: z
+									.string()
+									.trim()
+									.min(1, "Identity must have a value.")
+									.max(16 * 1024, "Identity is too long."),
+								endpoints: z
+									.array(z.string().trim().min(1, "Endpoint must have a value.").max(512))
+									.min(1, "At least one endpoint is required.")
+									.max(32, "Too many endpoints."),
+								comments: z.string().max(1024).optional(),
+							}),
+						)
+						.min(1, "At least one root node is required.")
+						.max(32, "Too many root nodes."),
 				})
 				.refine(
 					// Validator function
 					(data) => {
 						if (!data.plRecommend) {
-							return data.plID !== null && data.plBirth !== null;
+							return data.plID !== undefined && data.plBirth !== undefined;
 						}
 						return true;
 					},
@@ -1180,35 +1250,31 @@ export const adminRouter = createTRPCRouter({
 
 				/*
 				 *
-				 * Update local.conf file with the new port number
-				 *
-				 */
-				// Extract the port numbers from the first endpoint string
-				const portNumbers = input.rootNodes[0].endpoints[0]
-					.split(",")
-					.map((endpoint) => Number.parseInt(endpoint.split("/").pop() || "", 10));
-
-				try {
-					await updateLocalConf(portNumbers);
-				} catch (error) {
-					throwError(error);
-				}
-
-				/*
-				 *
 				 * Generate planet file using mkworld
 				 *
 				 */
 				try {
-					execFileSync(
-						ztmkworldBinPath,
-						["-c", `${mkworldDir}/mkworld.config.json`],
-						{ cwd: mkworldDir, timeout: 30_000, stdio: "ignore" },
-					);
+					execFileSync(ztmkworldBinPath, ["-c", `${mkworldDir}/mkworld.config.json`], {
+						cwd: mkworldDir,
+						timeout: 30_000,
+						stdio: "ignore",
+					});
 				} catch (_error) {
 					throwError(
 						"Could not create planet file. Please make sure your config is valid.",
 					);
+				}
+
+				// Extract and validate ports only after ztmkworld has generated a valid
+				// planet. A malformed config must not leave local.conf changed while the
+				// active planet remains untouched.
+				const portNumbers = extractEndpointPorts(
+					input.rootNodes.flatMap((node) => node.endpoints),
+				);
+				try {
+					await updateLocalConf(portNumbers);
+				} catch (error) {
+					throwError(error);
 				}
 				// Copy generated planet file
 				fs.copyFileSync(`${mkworldDir}/planet.custom`, planetPath);
@@ -1330,7 +1396,9 @@ export const adminRouter = createTRPCRouter({
 				const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 				const backupName = input.backupName || `ztnet-backup-${timestamp}`;
 				if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(backupName)) {
-					throwError("Backup name may contain only letters, numbers, dot, underscore and dash");
+					throwError(
+						"Backup name may contain only letters, numbers, dot, underscore and dash",
+					);
 				}
 				const backupDir = path.join(process.cwd(), "tmp", "backups");
 				const tempDir = path.join(backupDir, "temp", Date.now().toString());
@@ -1428,7 +1496,10 @@ export const adminRouter = createTRPCRouter({
 
 						// Copy ZeroTier folder to temp directory
 						try {
-						fs.cpSync(ZT_FOLDER, ztBackupPath, { recursive: true, dereference: false });
+							fs.cpSync(ZT_FOLDER, ztBackupPath, {
+								recursive: true,
+								dereference: false,
+							});
 						} catch (error) {
 							throw new Error(`ZeroTier backup failed: ${error.message}`);
 						}
@@ -1631,9 +1702,20 @@ export const adminRouter = createTRPCRouter({
 					}
 
 					const tarFlag = tarOptions.slice(1);
-					execFileSync("tar", [`-${tarFlag}`, backupPath, "-C", extractDir, "--no-same-owner", "--no-same-permissions"], {
-						stdio: ["pipe", "pipe", "inherit"],
-					});
+					execFileSync(
+						"tar",
+						[
+							`-${tarFlag}`,
+							backupPath,
+							"-C",
+							extractDir,
+							"--no-same-owner",
+							"--no-same-permissions",
+						],
+						{
+							stdio: ["pipe", "pipe", "inherit"],
+						},
+					);
 				} catch (extractError) {
 					throw new Error(`Failed to extract backup: ${extractError.message}`);
 				}
@@ -1714,7 +1796,10 @@ export const adminRouter = createTRPCRouter({
 
 								if (containerCheck.trim()) {
 									try {
-										execSync("docker stop zerotier", { stdio: "ignore", timeout: 30000 });
+										execSync("docker stop zerotier", {
+											stdio: "ignore",
+											timeout: 30000,
+										});
 										await new Promise((resolve) => setTimeout(resolve, 3000));
 									} catch {
 										// Continue anyway if we can't stop the container
@@ -1782,7 +1867,9 @@ export const adminRouter = createTRPCRouter({
 
 							// Set proper permissions
 							try {
-								execSync(`chown -R 999:999 "${ZT_FOLDER}"`, { stdio: "ignore" });
+								execSync(`chown -R 999:999 "${ZT_FOLDER}"`, {
+									stdio: "ignore",
+								});
 								execSync(`chmod -R 700 "${ZT_FOLDER}"`);
 							} catch {
 								// Continue if we can't set permissions
@@ -1790,7 +1877,10 @@ export const adminRouter = createTRPCRouter({
 
 							// Start the ZeroTier container
 							try {
-								execSync("docker start zerotier", { stdio: "ignore", timeout: 30000 });
+								execSync("docker start zerotier", {
+									stdio: "ignore",
+									timeout: 30000,
+								});
 								await new Promise((resolve) => setTimeout(resolve, 5000));
 							} catch {
 								// Don't throw error, just log warning - the restore was successful

@@ -18,7 +18,10 @@ const ApiRequestSchema = z.object({
 		memberId: z.string().optional(),
 		id: z.string().optional(),
 	}),
-	body: z.unknown(),
+	// GET/DELETE requests commonly have no parsed body.  Keep the wrapper
+	// compatible with Next.js' `req.body === undefined` instead of turning a
+	// missing body into a validation error before the authentication check.
+	body: z.unknown().optional(),
 });
 
 /**
@@ -100,11 +103,17 @@ export const SecuredOrganizationApiRoute = (
 				prisma,
 			};
 
-			await checkUserOrganizationRole({
-				ctx,
-				organizationId: orgId,
-				minimumRequiredRole: mergedOptions.requiredRole,
-			});
+			// Collection endpoints (for example GET /api/v1/org) deliberately do
+			// not require an orgid and must not attempt an authorization lookup for
+			// the string "undefined". If an optional orgid is supplied, still enforce
+			// the requested organization role.
+			if (orgId) {
+				await checkUserOrganizationRole({
+					ctx,
+					organizationId: orgId,
+					minimumRequiredRole: mergedOptions.requiredRole,
+				});
+			}
 
 			await handler(req, res, {
 				body,
@@ -188,10 +197,7 @@ export const SecuredPrivateApiRoute = (
 					select: { authorId: true, description: true },
 				});
 
-				if (
-					(networkId && !userIsAuthor) ||
-					userIsAuthor.authorId !== decryptedData.userId
-				) {
+				if (!userIsAuthor || userIsAuthor.authorId !== decryptedData.userId) {
 					return res.status(401).json({ error: "Network not found or access denied." });
 				}
 			}

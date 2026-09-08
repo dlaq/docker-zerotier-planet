@@ -24,7 +24,9 @@ function firstHeader(
 function normalizeAddress(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	const candidate = value.trim().replace(/^\[([^\]]+)\](?::\d+)?$/, "$1");
-	const mappedIpv4 = candidate.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i)?.[1];
+	const mappedIpv4 = candidate.match(
+		/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i,
+	)?.[1];
 	const address = mappedIpv4 || candidate;
 	return isIP(address) ? address : undefined;
 }
@@ -40,12 +42,17 @@ function normalizeAddress(value: string | undefined): string | undefined {
 export function getClientRateLimitIdentifier(req?: RequestLike): string {
 	const trustProxy = process.env.ZTPLANET_TRUST_PROXY?.toLowerCase() === "true";
 	if (trustProxy) {
-		const forwarded = firstHeader(req?.headers, "x-forwarded-for")?.split(",", 1)[0];
-		const forwardedAddress = normalizeAddress(forwarded?.trim());
+		const forwarded = firstHeader(req?.headers, "x-forwarded-for");
+		// Caddy appends the socket peer to any client-supplied XFF value. Read
+		// from the right so a caller cannot prepend arbitrary addresses and create
+		// a fresh rate-limit bucket for every request. Deployments with another
+		// proxy must configure it to overwrite XFF, or put its final address last.
+		const forwardedAddress = forwarded
+			?.split(",")
+			.reverse()
+			.map((value) => normalizeAddress(value.trim()))
+			.find((value): value is string => Boolean(value));
 		if (forwardedAddress) return forwardedAddress;
-
-		const realAddress = normalizeAddress(firstHeader(req?.headers, "x-real-ip"));
-		if (realAddress) return realAddress;
 	}
 
 	return normalizeAddress(req?.socket?.remoteAddress) || "unknown";
@@ -54,8 +61,14 @@ export function getClientRateLimitIdentifier(req?: RequestLike): string {
 // Helper function to get rate limit config values
 // This ensures values are read at runtime, not module load time
 function getApiWindowMs(): number {
-	const windowMinutes = Number.parseInt(process.env.RATE_LIMIT_API_WINDOW || "1", 10);
-	return (Number.isNaN(windowMinutes) ? 1 : windowMinutes) * 60 * 1000;
+	const windowMinutes = Number.parseInt(
+		process.env.RATE_LIMIT_API_WINDOW || "1",
+		10,
+	);
+	const boundedMinutes = Number.isNaN(windowMinutes)
+		? 1
+		: Math.min(24 * 60, Math.max(1, windowMinutes));
+	return boundedMinutes * 60 * 1000;
 }
 
 function getApiMaxRequests(): number {
@@ -63,7 +76,9 @@ function getApiMaxRequests(): number {
 		process.env.RATE_LIMIT_API_MAX_REQUESTS || "50",
 		10,
 	);
-	return Number.isNaN(maxRequests) ? 50 : maxRequests;
+	return Number.isNaN(maxRequests)
+		? 50
+		: Math.min(100000, Math.max(1, maxRequests));
 }
 
 // Rate limit configuration - use functions for lazy evaluation
@@ -83,7 +98,12 @@ export default function rateLimit(options?: Options) {
 	});
 
 	return {
-		check: (res: NextApiResponse, limit: number, token: string, identifier = "global") =>
+		check: (
+			res: NextApiResponse,
+			limit: number,
+			token: string,
+			identifier = "global",
+		) =>
 			new Promise<void>((resolve, reject) => {
 				// Include the caller identity in the bucket when a route supplies it.
 				// Keeping the default global preserves compatibility for internal jobs
@@ -96,9 +116,12 @@ export default function rateLimit(options?: Options) {
 				tokenCount[0] += 1;
 
 				const currentUsage = tokenCount[0];
-				const isRateLimited = currentUsage >= limit;
+				const isRateLimited = currentUsage > limit;
 				res.setHeader("X-RateLimit-Limit", limit);
-				res.setHeader("X-RateLimit-Remaining", isRateLimited ? 0 : limit - currentUsage);
+				res.setHeader(
+					"X-RateLimit-Remaining",
+					isRateLimited ? 0 : limit - currentUsage,
+				);
 
 				return isRateLimited ? reject() : resolve();
 			}),

@@ -23,9 +23,9 @@ jest.mock("~/server/db", () => ({
 			findFirst: jest.fn(),
 			update: jest.fn(),
 		},
-		account: {
-			findFirst: jest.fn(),
-			create: jest.fn(),
+	account: {
+		findFirst: jest.fn(),
+		upsert: jest.fn(),
 		},
 	},
 }));
@@ -218,6 +218,23 @@ describe("failed-password bookkeeping", () => {
 		).resolves.toBeUndefined();
 		expect(prisma.user.update).not.toHaveBeenCalled();
 	});
+
+	it("returns quietly when the password is not a string", async () => {
+		(prisma.user.findFirst as jest.Mock).mockResolvedValue({
+			id: "u1",
+			email: "u@example.com",
+			hash: "$2a$10$x",
+			failedLoginAttempts: 0,
+			lastFailedLoginAttempt: null,
+			twoFactorEnabled: false,
+		});
+
+		await expect(
+			runBeforeAuthHook(makeCtx({ email: "u@example.com", password: {} as string })),
+		).resolves.toBeUndefined();
+		expect(compare).not.toHaveBeenCalled();
+		expect(prisma.user.update).not.toHaveBeenCalled();
+	});
 });
 
 describe("credential Account backfill", () => {
@@ -235,13 +252,20 @@ describe("credential Account backfill", () => {
 
 		await runBeforeAuthHook(makeCtx({ email: "u@example.com", password: "right" }));
 
-		expect(prisma.account.create).toHaveBeenCalledWith({
-			data: {
+		expect(prisma.account.upsert).toHaveBeenCalledWith({
+			where: {
+				providerId_accountId: {
+					providerId: "credential",
+					accountId: "u1",
+				},
+			},
+			create: {
 				userId: "u1",
 				accountId: "u1",
 				providerId: "credential",
 				password: "$2a$10$existing",
 			},
+			update: { password: "$2a$10$existing" },
 		});
 	});
 
@@ -262,7 +286,7 @@ describe("credential Account backfill", () => {
 
 		await runBeforeAuthHook(makeCtx({ email: "u@example.com", password: "right" }));
 
-		expect(prisma.account.create).not.toHaveBeenCalled();
+		expect(prisma.account.upsert).not.toHaveBeenCalled();
 	});
 
 	it("skips backfill for OAuth-only users (no User.hash)", async () => {
@@ -277,7 +301,7 @@ describe("credential Account backfill", () => {
 		(prisma.account.findFirst as jest.Mock).mockResolvedValue(null);
 
 		await runBeforeAuthHook(makeCtx({ email: "u@example.com", password: "any" }));
-		expect(prisma.account.create).not.toHaveBeenCalled();
+		expect(prisma.account.upsert).not.toHaveBeenCalled();
 	});
 });
 

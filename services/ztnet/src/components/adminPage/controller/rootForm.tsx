@@ -130,7 +130,15 @@ const RootForm: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 						: prev.plRecommend,
 				plBirth: Number(getPlanet?.plBirth) || prev.plBirth,
 				plID: Number(getPlanet?.plID) || prev.plID,
-				rootNodes: rootNodesData, // Set the rootNodes
+				rootNodes: rootNodesData.map((node) => ({
+					identity: typeof node.identity === "string" ? node.identity : "",
+					endpoints: Array.isArray(node.endpoints)
+						? node.endpoints.filter(
+								(endpoint): endpoint is string => typeof endpoint === "string",
+							)
+						: [],
+					comments: typeof node.comments === "string" ? node.comments : "",
+				})), // Set the rootNodes
 			};
 		});
 	}, [getPlanet, getIdentity]);
@@ -291,7 +299,11 @@ const RootForm: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 									...world,
 									rootNodes: world.rootNodes.map((node) => ({
 										identity: node.identity || "",
-										endpoints: node.endpoints,
+										endpoints: Array.isArray(node.endpoints)
+											? node.endpoints.filter(
+													(endpoint): endpoint is string => typeof endpoint === "string",
+												)
+											: [],
 										comments: node.comments,
 									})),
 								},

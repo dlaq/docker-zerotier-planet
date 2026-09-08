@@ -465,11 +465,41 @@ export const networkRouter = createTRPCRouter({
 				nwid: z.string({ error: "Invalid network ID provided" }),
 				central: z.boolean().default(false),
 				organizationId: z.string().optional(),
+				// Used only by the global-admin delete-user workflow.  The caller
+				// still has to be an ADMIN; ordinary clients cannot bypass ownership.
+				adminOverride: z.boolean().optional().default(false),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
-			// Check if the user has permission to access this network
-			await checkNetworkAccess(ctx, input.nwid, Role.USER);
+			if (input.adminOverride) {
+				if (ctx.session.user.role !== Role.ADMIN) {
+					return throwError("Only global administrators may use adminOverride", "FORBIDDEN");
+				}
+			} else {
+				// Check if the user has permission to access this network
+				await checkNetworkAccess(ctx, input.nwid, Role.USER);
+			}
+
+			// Capture metadata before the controller/database rows are removed so
+			// webhook and organization notifications contain the real network name.
+			const networkToDelete = await ctx.prisma.network.findFirst({
+				where: {
+					nwid: input.nwid,
+					...(input.organizationId
+						? { organizationId: input.organizationId }
+						: input.adminOverride
+							? {}
+							: { authorId: ctx.session.user.id }),
+				},
+				select: {
+					name: true,
+					organizationId: true,
+					authorId: true,
+				},
+			});
+			if (!networkToDelete) {
+				return throwError("Network not found!", "NOT_FOUND");
+			}
 
 			try {
 				// De-authorize all members before deleting the network
@@ -505,8 +535,10 @@ export const networkRouter = createTRPCRouter({
 				if (!input.organizationId) {
 					await ctx.prisma.network.deleteMany({
 						where: {
-							authorId: ctx.session.user.id,
 							nwid: input.nwid,
+							...(input.adminOverride
+								? {}
+								: { authorId: ctx.session.user.id }),
 						},
 					});
 				}
@@ -524,19 +556,6 @@ export const networkRouter = createTRPCRouter({
 				}
 				throw error;
 			}
-
-			// Get network name for notification before deletion
-			const networkToDelete = await ctx.prisma.network.findFirst({
-				where: {
-					nwid: input.nwid,
-					...(input.organizationId
-						? { organizationId: input.organizationId }
-						: { authorId: ctx.session.user.id }),
-				},
-				select: {
-					name: true,
-				},
-			});
 
 			try {
 				// Send webhook

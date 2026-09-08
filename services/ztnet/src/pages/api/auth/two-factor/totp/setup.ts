@@ -4,7 +4,7 @@ import qrcode from "qrcode";
 import { prisma } from "~/server/db";
 import { compare } from "bcryptjs";
 import { ErrorCode } from "~/utils/errorCode";
-import { auth } from "~/lib/auth";
+import { getActiveSession } from "~/lib/activeSession";
 import { fromNodeHeaders } from "better-auth/node";
 import {
 	encrypt,
@@ -22,12 +22,17 @@ function generateOTPAuthURL(
 	return `${keyUri}&image=${encodeURIComponent(logoUrl)}`;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+	req: NextApiRequest,
+	res: NextApiResponse,
+) {
 	if (req.method !== "POST") {
 		return res.status(405).json({ message: "Method not allowed" });
 	}
 
-	const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+	const session = await getActiveSession({
+		headers: fromNodeHeaders(req.headers),
+	});
 	if (!session) {
 		return res.status(401).json({ error: ErrorCode.InternalServerError });
 	}
@@ -53,11 +58,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 	}
 
 	if (!process.env.NEXTAUTH_SECRET) {
-		console.error("Missing encryption key; cannot proceed with two factor setup.");
+		console.error(
+			"Missing encryption key; cannot proceed with two factor setup.",
+		);
 		return res.status(500).json({ error: ErrorCode.InternalServerError });
 	}
 
-	const isCorrectPassword = await compare(req.body.password, user.hash);
+	// Next.js leaves `req.body` undefined for an empty/malformed request. Treat
+	// that as a failed password check instead of passing `undefined` to bcrypt
+	// (which would throw and turn a client error into a 500 response).
+	const body =
+		req.body && typeof req.body === "object"
+			? (req.body as Record<string, unknown>)
+			: {};
+	const password = typeof body.password === "string" ? body.password : "";
+	const isCorrectPassword = await compare(password, user.hash);
 
 	if (!isCorrectPassword) {
 		return res.status(400).json({ error: ErrorCode.IncorrectPassword });
@@ -71,7 +86,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 		where: { email: session.user.email },
 		data: {
 			twoFactorEnabled: false,
-			twoFactorSecret: encrypt(secret, generateInstanceSecret(TOTP_MFA_TOKEN_SECRET)),
+			twoFactorSecret: encrypt(
+				secret,
+				generateInstanceSecret(TOTP_MFA_TOKEN_SECRET),
+			),
 		},
 	});
 

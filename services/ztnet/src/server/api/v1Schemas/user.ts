@@ -7,7 +7,7 @@ export const createUserSchema = z.object({
 		.string()
 		.email()
 		.transform((val) => val.trim()),
-	password: passwordSchema("password does not meet the requirements!"),
+	password: passwordSchema(),
 	name: z.string().min(3, "Name must contain at least 3 character(s)").max(40),
 	expiresAt: z.string().datetime().optional(),
 	generateApiToken: z.boolean().optional(),

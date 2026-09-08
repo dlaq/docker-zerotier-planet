@@ -71,6 +71,15 @@ const credentialsCache = new Map<
 
 const CACHE_TTL = 60000; // 60 seconds
 
+/** Invalidate credentials after a user changes controller/API settings. */
+export function clearApiCredentialsCache(userId?: string): void {
+	if (userId) {
+		credentialsCache.delete(userId);
+	} else {
+		credentialsCache.clear();
+	}
+}
+
 const getApiCredentials = async (
 	ctx: UserContext,
 ): Promise<{

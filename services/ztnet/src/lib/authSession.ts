@@ -1,4 +1,4 @@
-import { auth } from "./auth";
+import { getActiveSession } from "./activeSession";
 import { fromNodeHeaders } from "better-auth/node";
 import type { IncomingMessage } from "http";
 import type { GetServerSidePropsContext } from "next";
@@ -15,7 +15,7 @@ export async function getServerAuthSession(ctx: {
 	req: GetServerSidePropsContext["req"] | IncomingMessage;
 	res?: GetServerSidePropsContext["res"];
 }): Promise<Session | null> {
-	const session = await auth.api.getSession({
+	const session = await getActiveSession({
 		headers: fromNodeHeaders(ctx.req.headers),
 	});
 

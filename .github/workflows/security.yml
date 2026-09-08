@@ -57,7 +57,9 @@ jobs:
       - name: 构建 ${{ matrix.platform }} 全部镜像但暂不发布
         env:
           DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
-        run: COMPOSE_PROFILES=relay docker compose -f docker-compose.yml -f docker-compose.build.yml build --pull
+        run: COMPOSE_PROFILES=relay docker compose -f docker-compose.yml -f docker-compose.build.yml build --pull --no-cache
+      - name: 验证 1Panel 首次安装、登录和保留数据重建
+        run: python3 scripts/integration-smoke.py
       - name: 扫描仓库配置、依赖与密钥
         if: matrix.arch == 'amd64'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

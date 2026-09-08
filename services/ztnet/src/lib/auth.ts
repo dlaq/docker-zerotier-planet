@@ -1,7 +1,11 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { genericOAuth } from "better-auth/plugins";
-import { createAuthMiddleware, APIError } from "better-auth/api";
+import {
+	createAuthMiddleware,
+	formCsrfMiddleware,
+	APIError,
+} from "better-auth/api";
 import { compare, hash } from "bcryptjs";
 import { authenticator } from "otplib";
 import { prisma } from "~/server/db";
@@ -10,26 +14,76 @@ import {
 	generateInstanceSecret,
 	TOTP_MFA_TOKEN_SECRET,
 } from "~/utils/encryption";
-import { parseUA, DEVICE_SALT_COOKIE_NAME, secureCookiesEnabled } from "~/utils/devices";
+import {
+	parseUA,
+	DEVICE_SALT_COOKIE_NAME,
+	secureCookiesEnabled,
+} from "~/utils/devices";
 import { normalizeEmail } from "~/utils/email";
 import { sendMailWithTemplate } from "~/utils/mail";
 import { MailTemplateKey } from "~/utils/enums";
 import { parse } from "cookie";
 import { randomBytes } from "crypto";
-import { passwordMeetsPolicy, passwordPolicyMessage } from "~/utils/passwordPolicy";
+import { managementTrustedOrigins } from "./managementOrigin";
 
 const MAX_FAILED_ATTEMPTS = Math.min(
 	20,
-	Math.max(1, Number.parseInt(process.env.ZTPLANET_LOGIN_ATTEMPTS || "5", 10) || 5),
+	Math.max(
+		1,
+		Number.parseInt(process.env.ZTPLANET_LOGIN_ATTEMPTS || "5", 10) || 5,
+	),
 );
 const COOLDOWN_PERIOD =
 	Math.min(
 		86400,
 		Math.max(
 			60,
-			Number.parseInt(process.env.ZTPLANET_LOGIN_LOCKOUT_SECONDS || "900", 10) || 900,
-		),
-	) * 1000;
+			Number.parseInt(
+				process.env.ZTPLANET_LOGIN_LOCKOUT_SECONDS || "900",
+				10,
+			) || 900,
+			),
+		) * 1000;
+
+function boundedPositiveInt(
+	raw: string | undefined,
+	fallback: number,
+	maximum: number,
+): number {
+	const parsed = Number.parseInt(raw ?? "", 10);
+	if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+	return Math.min(parsed, maximum);
+}
+
+// Better Auth expresses rate-limit windows in seconds, while ztnet's existing
+// environment variables are documented in minutes. Override Better Auth's
+// hard-coded special rule (3 requests/10 seconds) with the operator's existing
+// sensitive-operation budget so the GUI/.env settings are actually honoured.
+const AUTH_RATE_LIMIT_WINDOW_SECONDS =
+	boundedPositiveInt(process.env.RATE_LIMIT_WINDOW, 10, 24 * 60) * 60;
+const AUTH_GENERAL_RATE_LIMIT = boundedPositiveInt(
+	process.env.RATE_LIMIT_MAX_REQUESTS,
+	60,
+	10000,
+);
+const AUTH_SHORT_RATE_LIMIT = boundedPositiveInt(
+	process.env.RATE_LIMIT_MAX_REQUESTS_SHORT,
+	10,
+	1000,
+);
+
+// Caddy is the only public path in the bundled Compose. It appends its own
+// address to X-Forwarded-For; tell Better Auth which fixed Docker subnet is
+// allowed to terminate that proxy chain so its built-in per-IP limiter does not
+// collapse every user into one shared bucket. Operators using another proxy
+// must replace this with that proxy's exact IP/CIDR, never "*".
+function trustedProxyRanges(): string[] {
+	const configured = process.env.ZTPLANET_TRUSTED_PROXIES?.trim();
+	return (configured || "172.31.255.0/24")
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+}
 
 // We expose the generic OAuth provider as id "oauth" — the same id ztnet has
 // always shipped, and the one referenced in `signIn.social({ provider: "oauth" })`.
@@ -91,7 +145,9 @@ export function mapOAuthProfileToUser(profile: Record<string, unknown>): {
 	// credential sign-in (which lowercases before lookup) would never find. A
 	// whitespace-only value becomes "", treated as no email at all.
 	const normalized =
-		typeof profile.email === "string" ? normalizeEmail(profile.email) : undefined;
+		typeof profile.email === "string"
+			? normalizeEmail(profile.email)
+			: undefined;
 	const email = normalized || undefined;
 	const pickStr = (key: string): string | undefined =>
 		typeof profile[key] === "string" ? (profile[key] as string) : undefined;
@@ -173,16 +229,12 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 		});
 	}
 
-	// The normal UI registers through the tRPC router, but Better Auth also
-	// exposes a direct /sign-up/email endpoint.  Enforce the same policy there
-	// so a caller cannot bypass the configurable password requirements by using
-	// the underlying endpoint directly.
+	// Registration must go through ZTNet's invitation and registration controls.
+	// Keep this guard even though the unused built-in endpoint is disabled below.
 	if (ctx.path === "/sign-up/email") {
-		const rawPassword = (ctx.body as Record<string, unknown>)?.password;
-		if (typeof rawPassword === "string" && !passwordMeetsPolicy(rawPassword)) {
-			throw new APIError("BAD_REQUEST", { message: passwordPolicyMessage() });
-		}
-		return;
+		throw new APIError("FORBIDDEN", {
+			message: "Use the ZTNet registration page.",
+		});
 	}
 
 	if (ctx.path !== "/sign-in/email") return;
@@ -205,21 +257,32 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 	if (!user) return; // let better-auth handle "user not found"
 
 	// 1. Cooldown check (custom, not provided by better-auth)
-	if (user.lastFailedLoginAttempt && user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
-		const timeSinceLastFailed = Date.now() - user.lastFailedLoginAttempt.getTime();
+	if (
+		user.lastFailedLoginAttempt &&
+		user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS
+	) {
+		const timeSinceLastFailed =
+			Date.now() - user.lastFailedLoginAttempt.getTime();
 		if (timeSinceLastFailed < COOLDOWN_PERIOD) {
 			throw new APIError("TOO_MANY_REQUESTS", {
 				message: "Too many failed attempts. Please try again later.",
 			});
 		}
+		// An elapsed lockout starts a fresh attempt window. Keeping the old
+		// counter would lock the account again after just one mistyped password.
+		await prisma.user.update({
+			where: { id: user.id },
+			data: { failedLoginAttempts: 0, lastFailedLoginAttempt: null },
+		});
 	}
 
 	// 2. Track failed-password attempts (better-auth checks the password but doesn't
 	// persist failure counters). We compare against User.hash here purely to detect
 	// the failure so we can increment the counter; better-auth re-verifies against
 	// Account.password and is the authoritative check.
-	const password = (ctx.body as Record<string, unknown>)?.password as string;
-	if (password && user.hash) {
+	const rawPassword = (ctx.body as Record<string, unknown>)?.password;
+	if (typeof rawPassword === "string" && user.hash) {
+		const password = rawPassword;
 		const isValid = await compare(password, user.hash);
 		if (!isValid) {
 			await prisma.user.update({
@@ -242,13 +305,23 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 		where: { userId: user.id, providerId: "credential" },
 	});
 	if (!existingAccount && user.hash) {
-		await prisma.account.create({
-			data: {
+		// A simultaneous first login can otherwise race the find/create pair and
+		// surface a unique-constraint error as a 500. Upsert makes the backfill
+		// idempotent while keeping the stored hash authoritative.
+		await prisma.account.upsert({
+			where: {
+				providerId_accountId: {
+					providerId: "credential",
+					accountId: user.id,
+				},
+			},
+			create: {
 				userId: user.id,
 				accountId: user.id,
 				providerId: "credential",
 				password: user.hash,
 			},
+			update: { password: user.hash },
 		});
 	}
 
@@ -270,7 +343,9 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 		}
 
 		if (!process.env.NEXTAUTH_SECRET) {
-			console.error("Missing encryption key; cannot proceed with two factor login.");
+			console.error(
+				"Missing encryption key; cannot proceed with two factor login.",
+			);
 			throw new APIError("INTERNAL_SERVER_ERROR", {
 				message: "Internal server error",
 			});
@@ -299,12 +374,17 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 					lastFailedLoginAttempt: new Date(),
 				},
 			});
-			throw new APIError("UNAUTHORIZED", { message: "incorrect-two-factor-code" });
+			throw new APIError("UNAUTHORIZED", {
+				message: "incorrect-two-factor-code",
+			});
 		}
 	}
 }
 
 const beforeHook = createAuthMiddleware(async (ctx) => {
+	// Run the library's CSRF check before our failed-login bookkeeping: its
+	// endpoint middleware otherwise runs after this hook and after database writes.
+	if (ctx.path === "/sign-in/email") await formCsrfMiddleware(ctx);
 	await runBeforeAuthHook(ctx);
 });
 
@@ -359,7 +439,8 @@ export async function onSessionCreated(
 
 	// Device tracking
 	const headers: Headers | null = ctx?.headers ?? null;
-	const userAgent = headers?.get("x-user-agent") || headers?.get("user-agent") || "";
+	const userAgent =
+		headers?.get("x-user-agent") || headers?.get("user-agent") || "";
 	if (!userAgent) return;
 
 	const cookieHeader = headers?.get("cookie") || "";
@@ -457,7 +538,12 @@ export async function onUserCreateBefore(
 	const path: string | undefined = ctx?.path;
 	const isOAuthFlow =
 		typeof path === "string" &&
-		(path.startsWith("/oauth2/callback/") || path === "/sign-in/oauth2");
+		// genericOAuth uses Better Auth's core `/callback/:id` endpoint. Keep the
+		// legacy `/oauth2/callback/*` form for installations carrying an older
+		// provider plugin, and cover the client-side OAuth sign-in entry point.
+		(path.startsWith("/callback/") ||
+			path.startsWith("/oauth2/callback/") ||
+			path === "/sign-in/oauth2");
 
 	if (isOAuthFlow) {
 		// Honour OAUTH_ALLOW_NEW_USERS — block OAuth account creation when off.
@@ -481,7 +567,11 @@ export async function onUserCreateBefore(
 		}
 	}
 
-	const userCount = await prisma.user.count();
+	// Email registration is serialized by authRouter's transaction. OAuth user
+	// creation is owned by Better Auth, so never grant ADMIN from a racy count in
+	// this before-hook; the after-hook promotes exactly one committed OAuth user
+	// under a PostgreSQL advisory transaction lock.
+	const userCount = isOAuthFlow ? 1 : await prisma.user.count();
 	const defaultUserGroup = await prisma.userGroup.findFirst({
 		where: { isDefault: true },
 	});
@@ -489,7 +579,7 @@ export async function onUserCreateBefore(
 	return {
 		data: {
 			...user,
-			role: userCount === 0 ? "ADMIN" : "USER",
+			role: isOAuthFlow ? "USER" : userCount === 0 ? "ADMIN" : "USER",
 			lastLogin: new Date(),
 			firstTime: true,
 			isActive: true,
@@ -498,15 +588,71 @@ export async function onUserCreateBefore(
 	};
 }
 
+/**
+ * Promote the first committed OAuth user without a check-then-insert race.
+ * Better Auth runs database `after` hooks after the user transaction commits;
+ * this short PostgreSQL transaction then serializes the existence check and
+ * role update. Subsequent OAuth users remain USER, even across app processes.
+ */
+export async function onUserCreateAfter(
+	user: Record<string, unknown>,
+	// biome-ignore lint/suspicious/noExplicitAny: better-auth's GenericEndpointContext
+	ctx: any | null,
+): Promise<void> {
+	const path: string | undefined = ctx?.path;
+	const isOAuthFlow =
+		typeof path === "string" &&
+		(path.startsWith("/callback/") ||
+			path.startsWith("/oauth2/callback/") ||
+			path === "/sign-in/oauth2");
+	const userId = user.id;
+	if (!isOAuthFlow || typeof userId !== "string") return;
+
+	await prisma.$transaction(async (tx) => {
+		await tx.$executeRaw`SELECT pg_advisory_xact_lock(748937622)`;
+		const existingAdmin = await tx.user.findFirst({
+			where: { role: "ADMIN" },
+			select: { id: true },
+		});
+		if (!existingAdmin) {
+			await tx.user.update({
+				where: { id: userId },
+				data: { role: "ADMIN" },
+			});
+		}
+	});
+}
+
 export const auth = betterAuth({
 	database: prismaAdapter(prisma, {
 		provider: "postgresql",
+		// Better Auth wraps OAuth user/account creation and password-reset
+		// consumption in transactions. The Prisma adapter defaults this option to
+		// false; enabling it prevents partial OAuth accounts and makes the hook
+		// lifecycle rollback-safe on PostgreSQL.
+		transaction: true,
 	}),
 
 	// Backward compat: use existing NEXTAUTH_SECRET and NEXTAUTH_URL env vars
 	secret: process.env.NEXTAUTH_SECRET,
 	baseURL: process.env.NEXTAUTH_URL,
+	trustedOrigins: managementTrustedOrigins,
+	// ZTNet's tRPC routes own registration, invitations, password policy and
+	// the two credential stores. The unused built-in alternatives skip these.
+	disabledPaths: [
+		"/sign-up/email",
+		"/change-password",
+		"/set-password",
+		"/reset-password",
+		"/request-password-reset",
+	],
 	advanced: {
+		disableOriginCheck: false,
+		disableCSRFCheck: false,
+		ipAddress: {
+			ipAddressHeaders: ["x-forwarded-for"],
+			trustedProxies: trustedProxyRanges(),
+		},
 		useSecureCookies: secureCookiesEnabled(),
 		defaultCookieAttributes: {
 			httpOnly: true,
@@ -515,10 +661,46 @@ export const auth = betterAuth({
 			path: "/",
 		},
 	},
+	rateLimit: {
+		window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+		max: AUTH_GENERAL_RATE_LIMIT,
+		customRules: {
+			"/sign-in/email": {
+				window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+				max: AUTH_SHORT_RATE_LIMIT,
+			},
+			"/sign-up/email": {
+				window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+				max: AUTH_SHORT_RATE_LIMIT,
+			},
+			"/change-password": {
+				window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+				max: AUTH_SHORT_RATE_LIMIT,
+			},
+			"/change-email": {
+				window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+				max: AUTH_SHORT_RATE_LIMIT,
+			},
+			"/request-password-reset": {
+				window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+				max: AUTH_SHORT_RATE_LIMIT,
+			},
+			"/send-verification-email": {
+				window: AUTH_RATE_LIMIT_WINDOW_SECONDS,
+				max: AUTH_SHORT_RATE_LIMIT,
+			},
+		},
+	},
 
 	session: {
-		expiresIn:
-			Number.parseInt(process.env.NEXTAUTH_SESSION_MAX_AGE, 10) || 8 * 60 * 60,
+		expiresIn: Math.min(
+			8 * 60 * 60,
+			Math.max(
+				900,
+				Number.parseInt(process.env.NEXTAUTH_SESSION_MAX_AGE, 10) ||
+					8 * 60 * 60,
+			),
+		),
 		cookieCache: {
 			// Disabled: better-auth's cookie cache returns the cached user object
 			// (including `isActive`, `requestChangePassword`, `role`) without hitting
@@ -532,6 +714,7 @@ export const auth = betterAuth({
 
 	emailAndPassword: {
 		enabled: true,
+		disableSignUp: true,
 		password: {
 			hash: async (password: string) => {
 				return hash(password, 12);
@@ -544,32 +727,76 @@ export const auth = betterAuth({
 
 	user: {
 		additionalFields: {
-			lastLogin: { type: "date", required: false },
-			lastseen: { type: "date", required: false },
-			online: { type: "boolean", required: false, defaultValue: false },
-			role: { type: "string", defaultValue: "USER", required: false },
-			hash: { type: "string", required: false },
-			tempPassword: { type: "string", required: false },
-			firstTime: { type: "boolean", required: false, defaultValue: true },
-			twoFactorEnabled: { type: "boolean", required: false, defaultValue: false },
-			twoFactorSecret: { type: "string", required: false },
-			failedLoginAttempts: { type: "number", required: false, defaultValue: 0 },
+			lastLogin: { type: "date", required: false, input: false },
+			lastseen: { type: "date", required: false, input: false },
+			online: {
+				type: "boolean",
+				required: false,
+				defaultValue: false,
+				input: false,
+			},
+			role: {
+				type: "string",
+				defaultValue: "USER",
+				required: false,
+				input: false,
+			},
+			hash: { type: "string", required: false, input: false, returned: false },
+			tempPassword: {
+				type: "string",
+				required: false,
+				input: false,
+				returned: false,
+			},
+			firstTime: {
+				type: "boolean",
+				required: false,
+				defaultValue: true,
+				input: false,
+			},
+			twoFactorEnabled: {
+				type: "boolean",
+				required: false,
+				defaultValue: false,
+				input: false,
+			},
+			twoFactorSecret: {
+				type: "string",
+				required: false,
+				input: false,
+				returned: false,
+			},
+			failedLoginAttempts: {
+				type: "number",
+				required: false,
+				defaultValue: 0,
+				input: false,
+			},
 			requestChangePassword: {
 				type: "boolean",
 				required: false,
 				defaultValue: false,
+				input: false,
 			},
-			userGroupId: { type: "number", required: false },
-			expiresAt: { type: "date", required: false },
-			isActive: { type: "boolean", required: false, defaultValue: true },
+			userGroupId: { type: "number", required: false, input: false },
+			expiresAt: { type: "date", required: false, input: false },
+			isActive: {
+				type: "boolean",
+				required: false,
+				defaultValue: true,
+				input: false,
+			},
 		},
 	},
 
 	account: {
 		accountLinking: {
+			// Email-based account linking is intentionally opt-in. An IdP that
+			// returns an unverified/attacker-controlled address must not be able to
+			// attach an OAuth identity to an existing local account by default.
 			enabled:
-				(process.env.OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING ?? "true").toLowerCase() !==
-				"false",
+				process.env.OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING?.toLowerCase() ===
+				"true",
 			trustedProviders: [OAUTH_PROVIDER_ID],
 		},
 	},
@@ -584,6 +811,7 @@ export const auth = betterAuth({
 		user: {
 			create: {
 				before: onUserCreateBefore,
+				after: onUserCreateAfter,
 			},
 		},
 		session: {

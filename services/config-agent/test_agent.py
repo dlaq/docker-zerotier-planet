@@ -3,6 +3,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+import subprocess
 
 from ztplanet_agent import (
     Agent,
@@ -10,6 +12,7 @@ from ztplanet_agent import (
     changed_services,
     default_config,
     effective_management_listeners,
+    listener_is_present,
     render_compose_override,
     validate_config,
 )
@@ -87,6 +90,35 @@ class ValidationTests(unittest.TestCase):
 
 
 class AgentTests(unittest.TestCase):
+    def test_disabling_relay_never_starts_it_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Agent(Path(directory) / "state", Path(directory), apply_docker=True)
+            with patch("ztplanet_agent.subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+                result = agent.apply_runtime(["relay"], default_config())
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertTrue(any(command[-2:] == ["stop", "relay"] for command in commands))
+            self.assertFalse(any("up" in command for command in commands))
+            self.assertEqual(result["services"], [])
+
+    def test_disabled_relay_is_excluded_from_multi_service_recreation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Agent(Path(directory) / "state", Path(directory), apply_docker=True)
+            healthy = json.dumps({"Service": "ztnet", "State": "running", "Health": "healthy"})
+            with patch("ztplanet_agent.subprocess.run", return_value=subprocess.CompletedProcess([], 0, healthy, "")) as run:
+                agent.apply_runtime(["relay", "ztnet"], default_config())
+            up = next(call.args[0] for call in run.call_args_list if "up" in call.args[0])
+            self.assertNotIn("relay", up)
+            self.assertEqual(up[-1], "ztnet")
+
+    def test_listener_health_matches_ip_as_well_as_port(self):
+        listeners = [{"protocol": "tcp", "endpoint": "127.0.0.1:3443"}]
+        self.assertTrue(listener_is_present(listeners, "tcp", 3443, "127.0.0.1"))
+        self.assertFalse(listener_is_present(listeners, "tcp", 3443, "192.168.1.10"))
+        self.assertFalse(listener_is_present(listeners, "tcp", 3443, "0.0.0.0"))
+        self.assertFalse(listener_is_present(listeners, "udp", 3443, "127.0.0.1"))
+        self.assertTrue(listener_is_present([{"protocol": "tcp", "endpoint": "0.0.0.0:3443"}], "tcp", 3443, "192.168.1.10"))
+        self.assertTrue(listener_is_present([{"protocol": "tcp", "endpoint": "[::1]:3443"}], "tcp", 3443, "::1"))
+
     def test_compose_command_uses_published_image_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "@jest/globals";
+import { passwordSchema } from "~/server/api/routers/_schema";
 import {
 	getPasswordPolicy,
 	passwordMeetsPolicy,
@@ -15,13 +16,30 @@ const clearEnv = (name: string) => {
 };
 
 afterEach(() => {
-	if (ORIGINAL_ENV.minLength === undefined) clearEnv("ZTPLANET_PASSWORD_MIN_LENGTH");
+	if (ORIGINAL_ENV.minLength === undefined)
+		clearEnv("ZTPLANET_PASSWORD_MIN_LENGTH");
 	else process.env.ZTPLANET_PASSWORD_MIN_LENGTH = ORIGINAL_ENV.minLength;
-	if (ORIGINAL_ENV.minClasses === undefined) clearEnv("ZTPLANET_PASSWORD_MIN_CLASSES");
+	if (ORIGINAL_ENV.minClasses === undefined)
+		clearEnv("ZTPLANET_PASSWORD_MIN_CLASSES");
 	else process.env.ZTPLANET_PASSWORD_MIN_CLASSES = ORIGINAL_ENV.minClasses;
 });
 
 describe("runtime password policy", () => {
+	it("requires a password for registration and reset, while allowing explicit optional fields", () => {
+		expect(passwordSchema().safeParse(undefined).success).toBe(false);
+		expect(passwordSchema().safeParse("").success).toBe(false);
+		expect(passwordSchema().optional().safeParse(undefined).success).toBe(true);
+	});
+
+	it("reports the effective runtime policy even for an already-created schema", () => {
+		const schema = passwordSchema();
+		process.env.ZTPLANET_PASSWORD_MIN_LENGTH = "8";
+		process.env.ZTPLANET_PASSWORD_MIN_CLASSES = "1";
+		expect(schema.safeParse("password").success).toBe(true);
+		const invalid = schema.safeParse("short");
+		if (invalid.success) throw new Error("short password accepted");
+		expect(invalid.error.issues[0].message).toContain("8-128");
+	});
 	it("keeps the secure defaults", () => {
 		clearEnv("ZTPLANET_PASSWORD_MIN_LENGTH");
 		clearEnv("ZTPLANET_PASSWORD_MIN_CLASSES");

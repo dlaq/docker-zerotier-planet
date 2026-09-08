@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { authenticator } from "otplib";
-import { auth } from "~/lib/auth";
+import { getActiveSession } from "~/lib/activeSession";
 import { fromNodeHeaders } from "better-auth/node";
 import { prisma } from "~/server/db";
 import {
@@ -10,12 +10,17 @@ import {
 } from "~/utils/encryption";
 import { ErrorCode } from "~/utils/errorCode";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+	req: NextApiRequest,
+	res: NextApiResponse,
+) {
 	if (req.method !== "POST") {
 		return res.status(405).json({ message: "Method not allowed" });
 	}
 
-	const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+	const session = await getActiveSession({
+		headers: fromNodeHeaders(req.headers),
+	});
 	if (!session) {
 		return res.status(401).json({ message: "Not authenticated" });
 	}
@@ -44,7 +49,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 	// if user has 2fa
 	if (user.twoFactorEnabled) {
-		if (!req.body.totpCode) {
+		const body =
+			req.body && typeof req.body === "object"
+				? (req.body as Record<string, unknown>)
+				: {};
+		const totpCode = typeof body.totpCode === "string" ? body.totpCode : "";
+		if (!totpCode) {
 			return res.status(400).json({ error: ErrorCode.SecondFactorRequired });
 		}
 
@@ -56,7 +66,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 		}
 
 		if (!process.env.NEXTAUTH_SECRET) {
-			console.error(`"Missing encryption key; cannot proceed with two factor login."`);
+			console.error(
+				`"Missing encryption key; cannot proceed with two factor login."`,
+			);
 			throw new Error(ErrorCode.InternalServerError);
 		}
 
@@ -72,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 		}
 
 		// If user has 2fa enabled, check if body.totpCode is correct
-		const isValidToken = authenticator.check(req.body.totpCode, secret);
+		const isValidToken = authenticator.check(totpCode, secret);
 		if (!isValidToken) {
 			return res.status(400).json({ error: ErrorCode.IncorrectTwoFactorCode });
 		}

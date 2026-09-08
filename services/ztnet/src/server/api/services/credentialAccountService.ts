@@ -1,4 +1,14 @@
 import { prisma } from "~/server/db";
+import type { Prisma, PrismaClient } from "@prisma/client";
+
+// REST callers may already be inside a transaction; never open a second
+// connection for a credential row whose User is still uncommitted.
+export async function withAccountTransaction<T>(
+	client: PrismaClient | Prisma.TransactionClient,
+	work: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+	return "$transaction" in client ? client.$transaction(work) : work(client);
+}
 
 /**
  * Keep `Account` (better-auth's credential store, where `providerId="credential"`)
@@ -14,8 +24,9 @@ import { prisma } from "~/server/db";
 export async function upsertCredentialAccount(
 	userId: string,
 	passwordHash: string,
+	client: Pick<Prisma.TransactionClient, "account"> = prisma,
 ): Promise<void> {
-	await prisma.account.upsert({
+	await client.account.upsert({
 		where: {
 			providerId_accountId: {
 				providerId: "credential",

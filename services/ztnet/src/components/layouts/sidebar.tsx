@@ -132,7 +132,7 @@ const Sidebar = (): JSX.Element => {
 							<span className="ml-3">{t("networks")}</span>
 						</Link>
 					</li>
-					{me?.options?.ztCentralApiKey ? (
+					{me?.options?.ztCentralApiKeyConfigured ? (
 						<li className="my-px">
 							<Link
 								href="/central"

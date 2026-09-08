@@ -156,6 +156,7 @@ services:
       ZTPLANET_PASSWORD_MIN_LENGTH: "${ZTPLANET_PASSWORD_MIN_LENGTH:-14}"
       ZTPLANET_PASSWORD_MIN_CLASSES: "${ZTPLANET_PASSWORD_MIN_CLASSES:-2}"
       ZTPLANET_TRUST_PROXY: "${ZTPLANET_TRUST_PROXY:-true}"
+      ZTPLANET_TRUSTED_PROXIES: "${ZTPLANET_TRUSTED_PROXIES:-172.31.255.0/24}"
       ZTPLANET_REGISTER_RATE_LIMIT_WINDOW: "${ZTPLANET_REGISTER_RATE_LIMIT_WINDOW:-10}"
       ZTPLANET_REGISTER_RATE_LIMIT_MAX: "${ZTPLANET_REGISTER_RATE_LIMIT_MAX:-60}"
       RATE_LIMIT_WINDOW: "${RATE_LIMIT_WINDOW:-10}"
@@ -250,6 +251,12 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "/usr/bin/caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   relay:
     image: ${ZTPLANET_RELAY_IMAGE:-docker.io/dlaq/zerotier-planet-test:relay-${ZTPLANET_RELEASE:-v1.1.0}}
@@ -260,7 +267,8 @@ services:
         required: false
     environment:
       RELAY_LISTEN: 0.0.0.0:4443
-      RELAY_METRICS_LISTEN: 0.0.0.0:9090
+      # 仅绑定 relay 专用网络地址；该端口没有宿主机映射。
+      RELAY_METRICS_LISTEN: 172.31.254.2:9090
     networks:
       relay-egress:
         ipv4_address: 172.31.254.2

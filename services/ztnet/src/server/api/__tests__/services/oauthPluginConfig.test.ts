@@ -9,7 +9,7 @@
  *   - Missing discoveryUrl when OAUTH_WELLKNOWN is set → no discovery, broken setup.
  *   - Wrong scopes parsing → IdPs reject unknown scope values.
  *   - Missing trustedProviders → email-verification gating blocks linking when
- *     OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING is on.
+ *     OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING is explicitly enabled.
  *
  * These tests load `auth` AFTER setting env vars (using jest.isolateModules) so
  * we can assert different env configurations without polluting the singleton.
@@ -37,6 +37,9 @@ const ENV_KEYS = [
 	"OAUTH_ALLOW_NEW_USERS",
 	"OAUTH_EXCLUSIVE_LOGIN",
 	"NEXTAUTH_URL",
+	"RATE_LIMIT_WINDOW",
+	"RATE_LIMIT_MAX_REQUESTS",
+	"RATE_LIMIT_MAX_REQUESTS_SHORT",
 ] as const;
 const ENV_BACKUP = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -196,7 +199,13 @@ describe("accountLinking config (OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING)", () => {
 		process.env.NEXTAUTH_URL = "https://ztnet.example";
 	});
 
-	it("enables account linking when OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING=true (the historical default)", () => {
+	it("keeps account linking disabled when the dangerous opt-in is unset", () => {
+		const { auth } = loadAuth();
+		// biome-ignore lint/suspicious/noExplicitAny: better-auth account options
+		expect((auth.options as any).account.accountLinking.enabled).toBe(false);
+	});
+
+	it("enables account linking only when OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING=true", () => {
 		process.env.OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING = "true";
 		const { auth } = loadAuth();
 		// biome-ignore lint/suspicious/noExplicitAny: better-auth account options
@@ -216,5 +225,36 @@ describe("accountLinking config (OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING)", () => {
 		expect((auth.options as any).account.accountLinking.trustedProviders).toContain(
 			"oauth",
 		);
+	});
+});
+
+describe("Better Auth rate-limit config", () => {
+	beforeEach(() => {
+		process.env.NEXTAUTH_URL = "https://ztnet.example";
+	});
+
+	it("maps the minute-based ztnet limits to Better Auth's second-based rules", () => {
+		process.env.RATE_LIMIT_WINDOW = "7";
+		process.env.RATE_LIMIT_MAX_REQUESTS = "80";
+		process.env.RATE_LIMIT_MAX_REQUESTS_SHORT = "12";
+		const { auth } = loadAuth();
+		// biome-ignore lint/suspicious/noExplicitAny: Better Auth options are intentionally inspected
+		const config = (auth.options as any).rateLimit;
+		expect(config.window).toBe(420);
+		expect(config.max).toBe(80);
+		expect(config.customRules["/sign-in/email"].window).toBe(420);
+		expect(config.customRules["/sign-in/email"].max).toBe(12);
+	});
+
+	it("rejects non-positive and excessive values back to bounded defaults", () => {
+		process.env.RATE_LIMIT_WINDOW = "0";
+		process.env.RATE_LIMIT_MAX_REQUESTS = "999999";
+		process.env.RATE_LIMIT_MAX_REQUESTS_SHORT = "-1";
+		const { auth } = loadAuth();
+		// biome-ignore lint/suspicious/noExplicitAny: Better Auth options are intentionally inspected
+		const config = (auth.options as any).rateLimit;
+		expect(config.window).toBe(600);
+		expect(config.max).toBe(10000);
+		expect(config.customRules["/sign-in/email"].max).toBe(10);
 	});
 });
