@@ -21,7 +21,7 @@ name: ztplanet
 
 services:
   postgres:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.0@sha256:6ea416f2fb99986e165f4930abdd28fe0c736def0c84e229513fcac8b6e1f401
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
     restart: unless-stopped
     environment:
       POSTGRES_USER: ztnet
@@ -67,7 +67,7 @@ services:
     cpus: 1.0
 
   zerotier:
-    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.0@sha256:51be0704376cf67b77f88ecf4544eae9793eeeae9d15947bf167b29154eb086c
+    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
     restart: unless-stopped
     volumes:
       - ./data/zerotier:/var/lib/zerotier-one
@@ -104,7 +104,7 @@ services:
       start_period: 20s
 
   ztnet-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -150,7 +150,7 @@ services:
     cpus: 0.25
 
   ztnet:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.0@sha256:2db7564eaa8d9fa4909582f7cc254ae783d42e4fd5b064e907c202182286ce33
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
     restart: unless-stopped
     user: "1001:1001"
     environment:
@@ -211,7 +211,7 @@ services:
       start_period: 90s
 
   gateway-init:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.0@sha256:6ea416f2fb99986e165f4930abdd28fe0c736def0c84e229513fcac8b6e1f401
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -311,7 +311,7 @@ services:
       - CHOWN
 
   gateway:
-    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.0@sha256:449c826588895579f6d00356849ed20422fffe5904139c9621ca22de76159131
+    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.2@sha256:d36c4520bd9ae1227876e377e845272eadbb2d911d20717cf369bc3a601b6c7f
     restart: unless-stopped
     user: "1002:1002"
     environment:
@@ -349,7 +349,7 @@ services:
       start_period: 10s
 
   relay:
-    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.0@sha256:01b1391d565d15dff7486cd8a1631781acd1d354d92e77a188a3f17078a8dc34
+    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.2@sha256:f9fb228500bea13809de15b8ebcb136b2bbf0d3e2d57a1ccf24d756e4df7a738
     profiles: ["relay"]
     restart: unless-stopped
     environment:

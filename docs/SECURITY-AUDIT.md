@@ -7,6 +7,26 @@
 问题：依赖扫描为零不等于没有漏洞。修复、验证范围和部署注意事项见
 [本轮缺陷修复记录](BUGFIX-2026-09-08.md)。新镜像必须重新经过双架构门禁后才能发布。
 
+## 2026-09-09 v1.1.2 发布复核
+
+v1.1.2 在发现新的 Nodemailer 公告后，将直接依赖从 9.0.1 升级到修复版 9.1.1，随后重新
+执行源码门禁、两种原生架构构建、Trivy 扫描、SBOM 生成和多架构 manifest 合并。GitHub
+Actions 运行
+[`34305946631`](https://github.com/dlaq/docker-zerotier-planet/actions/runs/34305946631)
+最终为 `Success`，五个镜像的 Medium/High/Critical 扫描均为 0；以下摘要来自 Docker Hub
+标签 API，部署 Compose 已固定到这些摘要。
+
+| 正式标签 | 多架构清单摘要 | 平台 |
+|---|---|---|
+| `zerotier-v1.1.2` | `sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce` | amd64、arm64 |
+| `ztnet-v1.1.2` | `sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a` | amd64、arm64 |
+| `relay-v1.1.2` | `sha256:f9fb228500bea13809de15b8ebcb136b2bbf0d3e2d57a1ccf24d756e4df7a738` | amd64、arm64 |
+| `postgres-v1.1.2` | `sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e` | amd64、arm64 |
+| `gateway-v1.1.2` | `sha256:d36c4520bd9ae1227876e377e845272eadbb2d911d20717cf369bc3a601b6c7f` | amd64、arm64 |
+
+该表证明的是发布清单和 CI 扫描结果，不替代目标 VPS 的防火墙、动态 DNS、证书、端口映射
+及运行时配置复核。
+
 ## 历史发布审计
 
 审计日期：2026-09-05。范围：本次交付源码、五个 Linux/amd64 与 Linux/arm64 生产
