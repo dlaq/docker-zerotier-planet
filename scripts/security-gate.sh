@@ -73,6 +73,8 @@ for required in (
 ):
     if required not in compose:
         raise SystemExit(f"ztnet-init missing controller permission guard: {required}")
+if compose.count('    pull_policy: always') != 7:
+    raise SystemExit("1Panel Compose must force a registry check for all seven services")
 healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/favicon.ico\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
 if healthcheck not in compose:
     raise SystemExit("ZTNet healthcheck must probe a static asset and accept HTTP 4xx responses")

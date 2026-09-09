@@ -119,6 +119,7 @@ name: ztplanet
 services:
   postgres:
     image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    pull_policy: always
     restart: unless-stopped
     environment:
       POSTGRES_USER: ztnet
@@ -165,6 +166,7 @@ services:
 
   zerotier:
     image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
+    pull_policy: always
     restart: unless-stopped
     volumes:
       - ./data/zerotier:/var/lib/zerotier-one
@@ -202,6 +204,7 @@ services:
 
   ztnet-init:
     image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    pull_policy: always
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -248,6 +251,7 @@ services:
 
   ztnet:
     image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    pull_policy: always
     restart: unless-stopped
     user: "1001:1001"
     environment:
@@ -309,6 +313,7 @@ services:
 
   gateway-init:
     image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    pull_policy: always
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -409,6 +414,7 @@ services:
 
   gateway:
     image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.2@sha256:d36c4520bd9ae1227876e377e845272eadbb2d911d20717cf369bc3a601b6c7f
+    pull_policy: always
     restart: unless-stopped
     user: "1002:1002"
     environment:
@@ -447,6 +453,7 @@ services:
 
   relay:
     image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.2@sha256:f9fb228500bea13809de15b8ebcb136b2bbf0d3e2d57a1ccf24d756e4df7a738
+    pull_policy: always
     profiles: ["relay"]
     restart: unless-stopped
     environment:
@@ -515,6 +522,36 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 ```
 
 5. 保存并启动编排。
+
+### 已存在编排没有拉取新版时
+
+1Panel 不会因为 GitHub 仓库更新而自动改写已经保存的 Compose；仅点击“启动”也可能继续
+复用本机旧镜像。先从本仓库当前 `master` 重新复制完整 Compose（或在 1Panel 编辑器中
+整段替换），确认 `image:` 行全部为 `*-v1.1.2@sha256:...`，不是 `v1.1.0`。
+
+在 1Panel 主机终端执行下面命令，`compose_dir` 替换为 1Panel 详情中显示的实际目录。命令
+只删除容器和网络，不删除 `./data/`，也不要添加 `-v`：
+
+```bash
+compose_dir="/1Panel显示的实际编排目录"
+cd "$compose_dir"
+sudo docker compose -p ztplanet config --images
+sudo docker compose -p ztplanet pull
+sudo docker compose -p ztplanet up -d --force-recreate --wait --wait-timeout 180
+```
+
+`config --images` 若仍显示 `v1.1.0`，说明 1Panel 仍在使用旧 Compose 文本；先保存新的完整
+内容再执行拉取。`pull` 完成后可用下面命令确认容器实际使用的镜像和 digest：
+
+```bash
+sudo docker inspect ztplanet-ztnet-1 \
+  --format 'config={{.Config.Image}} image={{.Image}}'
+sudo docker inspect ztplanet-zerotier-1 \
+  --format 'config={{.Config.Image}} image={{.Image}}'
+```
+
+本 Compose 为每个镜像声明了 `pull_policy: always`，以后执行“重建”会主动检查仓库；但
+版本仍由 Compose 中的不可变 digest 决定，不会把未审计的 `latest` 自动带入生产。
 
 不要把两个秘密值直接替换进 Compose 正文。Compose 中的 `${...}` 是变量引用，不是要求
 删除的占位符。缺少秘密值时编排会主动报错并拒绝启动，避免使用默认密码。

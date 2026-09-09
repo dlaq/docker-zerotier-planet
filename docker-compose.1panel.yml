@@ -22,6 +22,7 @@ name: ztplanet
 services:
   postgres:
     image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    pull_policy: always
     restart: unless-stopped
     environment:
       POSTGRES_USER: ztnet
@@ -68,6 +69,7 @@ services:
 
   zerotier:
     image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
+    pull_policy: always
     restart: unless-stopped
     volumes:
       - ./data/zerotier:/var/lib/zerotier-one
@@ -105,6 +107,7 @@ services:
 
   ztnet-init:
     image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    pull_policy: always
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -151,6 +154,7 @@ services:
 
   ztnet:
     image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    pull_policy: always
     restart: unless-stopped
     user: "1001:1001"
     environment:
@@ -212,6 +216,7 @@ services:
 
   gateway-init:
     image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    pull_policy: always
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -312,6 +317,7 @@ services:
 
   gateway:
     image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.2@sha256:d36c4520bd9ae1227876e377e845272eadbb2d911d20717cf369bc3a601b6c7f
+    pull_policy: always
     restart: unless-stopped
     user: "1002:1002"
     environment:
@@ -350,6 +356,7 @@ services:
 
   relay:
     image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.2@sha256:f9fb228500bea13809de15b8ebcb136b2bbf0d3e2d57a1ccf24d756e4df7a738
+    pull_policy: always
     profiles: ["relay"]
     restart: unless-stopped
     environment:
