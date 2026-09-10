@@ -34,6 +34,17 @@ import re
 root = Path.cwd()
 document = (root / "docs/PRODUCTION-DEPLOYMENT.md").read_text(encoding="utf-8")
 compose = (root / "docker-compose.1panel.yml").read_text(encoding="utf-8").rstrip("\n")
+env_example = (root / "docker-compose.1panel.env.example").read_text(encoding="utf-8")
+compose_env_keys = sorted(set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", compose)))
+for key in compose_env_keys:
+    # This is an escaped shell variable evaluated inside gateway-init, not a
+    # value that an operator can provide from .env.
+    if key == "management_host":
+        continue
+    if not re.search(rf"(?m)^{re.escape(key)}=", env_example):
+        raise SystemExit(f"1Panel .env example is missing Compose variable: {key}")
+if not re.search(r"(?m)^COMPOSE_PROFILES=", env_example):
+    raise SystemExit("1Panel .env example must document COMPOSE_PROFILES")
 begin = "<!-- ZTPLANET-COMPOSE-BEGIN -->\n\n```yaml\n"
 end = "\n```\n\n<!-- ZTPLANET-COMPOSE-END -->"
 if document.count(begin) != 1 or document.count(end) != 1:
