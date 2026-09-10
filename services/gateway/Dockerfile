@@ -1,4 +1,6 @@
-FROM golang:1.25.14-alpine3.23@sha256:27b3069b25647beacd3745b0b2c83e2f9b8d3935455a32cd4531236ee1c960e0 AS builder
+# Caddy's transitive x/crypto dependency is pinned below to the release that
+# fixes the 2026 SSH DoS advisories; that release requires Go 1.26.
+FROM golang:1.26.8-alpine3.23@sha256:33ce311e5eecedee48ec1b84419c1306e9fbd71009f0d5c3f2a6904b579c1ecc AS builder
 
 ARG CADDY_VERSION=2.11.4
 ARG CADDY_COMMIT=e2eee6a7fce366321294c9c2a79f3146891dcbdf
@@ -15,7 +17,7 @@ RUN git init . \
     && git checkout --detach FETCH_HEAD \
     && git apply --check /tmp/caddy-cel-go-0.29.patch \
     && git apply /tmp/caddy-cel-go-0.29.patch \
-    && go get golang.org/x/crypto@v0.55.0 \
+    && go get golang.org/x/crypto@v0.56.0 \
               golang.org/x/net@v0.57.0 \
               golang.org/x/text@v0.41.0 \
               github.com/google/cel-go@v0.29.0 \

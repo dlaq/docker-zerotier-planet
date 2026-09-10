@@ -1,5 +1,7 @@
 ARG NODEJS_IMAGE=node:24-alpine3.22@sha256:191c9f0080fcbbc6547a85dc0ff7988072214a355aabdc1d2ec55a7dae5eea8a
-ARG GOLANG_IMAGE=golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437
+# x/crypto v0.56.0 (the patched release for the SSH DoS advisories) requires
+# Go 1.26.  Keep the builder digest-pinned and multi-architecture.
+ARG GOLANG_IMAGE=golang:1.26-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81
 # Node/Prisma dependencies contain architecture-specific binaries.  Build this
 # stage for TARGETPLATFORM so the same Dockerfile produces a native arm64 image.
 FROM $NODEJS_IMAGE AS base
