@@ -5,7 +5,7 @@ name: ztplanet
 
 services:
   postgres:
-    image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.7}}
     restart: unless-stopped
     env_file:
       - path: /etc/ztplanet/runtime.env
@@ -51,7 +51,7 @@ services:
     cpus: 1.0
 
   zerotier:
-    image: ${ZTPLANET_ZEROTIER_IMAGE:-docker.io/dlaq/zerotier-planet-test:zerotier-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_ZEROTIER_IMAGE:-docker.io/dlaq/zerotier-planet-test:zerotier-${ZTPLANET_RELEASE:-v1.1.7}}
     restart: unless-stopped
     volumes:
       - ./data/zerotier:/var/lib/zerotier-one
@@ -88,7 +88,7 @@ services:
       start_period: 20s
 
   ztnet-init:
-    image: ${ZTPLANET_ZTNET_IMAGE:-docker.io/dlaq/zerotier-planet-test:ztnet-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_ZTNET_IMAGE:-docker.io/dlaq/zerotier-planet-test:ztnet-${ZTPLANET_RELEASE:-v1.1.7}}
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -134,7 +134,7 @@ services:
     cpus: 0.25
 
   ztnet:
-    image: ${ZTPLANET_ZTNET_IMAGE:-docker.io/dlaq/zerotier-planet-test:ztnet-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_ZTNET_IMAGE:-docker.io/dlaq/zerotier-planet-test:ztnet-${ZTPLANET_RELEASE:-v1.1.7}}
     restart: unless-stopped
     user: "1001:1001"
     env_file:
@@ -200,7 +200,7 @@ services:
       start_period: 90s
 
   gateway-init:
-    image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_POSTGRES_IMAGE:-docker.io/dlaq/zerotier-planet-test:postgres-${ZTPLANET_RELEASE:-v1.1.7}}
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -224,7 +224,7 @@ services:
     cpus: 0.25
 
   gateway:
-    image: ${ZTPLANET_GATEWAY_IMAGE:-docker.io/dlaq/zerotier-planet-test:gateway-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_GATEWAY_IMAGE:-docker.io/dlaq/zerotier-planet-test:gateway-${ZTPLANET_RELEASE:-v1.1.7}}
     restart: unless-stopped
     network_mode: host
     user: "1002:1002"
@@ -261,7 +261,7 @@ services:
       start_period: 10s
 
   relay:
-    image: ${ZTPLANET_RELAY_IMAGE:-docker.io/dlaq/zerotier-planet-test:relay-${ZTPLANET_RELEASE:-v1.1.6}}
+    image: ${ZTPLANET_RELAY_IMAGE:-docker.io/dlaq/zerotier-planet-test:relay-${ZTPLANET_RELEASE:-v1.1.7}}
     profiles: ["relay"]
     restart: unless-stopped
     env_file:
