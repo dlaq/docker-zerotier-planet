@@ -788,11 +788,25 @@ export const adminRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			try {
+				// The UI intentionally lists administrators as assignment targets. Keep
+				// that invariant in the API as well; otherwise a crafted request could
+				// attach an unmanaged controller network to an arbitrary user.
+				const targetUser = await ctx.prisma.user.findFirst({
+					where: { id: input.userId, role: Role.ADMIN },
+					select: { id: true },
+				});
+				if (!targetUser) {
+					throw new TRPCError({
+						code: "FORBIDDEN",
+						message: "Networks can only be assigned to an administrator",
+					});
+				}
+
 				// console.log(ipAssignmentPools);
 				// Store the created network in the database
 				const updatedUser = await ctx.prisma.user.update({
 					where: {
-						id: ctx.session.user.id,
+						id: input.userId,
 					},
 					data: {
 						network: {
@@ -810,6 +824,9 @@ export const adminRouter = createTRPCRouter({
 
 				// return ipAssignmentPools;
 			} catch (err: unknown) {
+				if (err instanceof TRPCError) {
+					throw err;
+				}
 				if (err instanceof Error) {
 					// Log the error and throw a custom error message
 

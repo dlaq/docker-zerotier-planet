@@ -69,6 +69,10 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 # Runtime migration and seed tooling is installed from the reviewed lockfile.
 RUN npm ci --omit=dev && npm cache clean --force
+# Backups are created inside the unprivileged ZTNet container. Bundle the
+# matching PostgreSQL 17 client so the admin backup action works in both
+# amd64 and arm64 images without Docker Socket access or host package mounts.
+RUN apk add --no-cache postgresql17-client
 # The entrypoint invokes the reviewed local Prisma binary directly. npm/npx are
 # build-time package managers and are removed from the public runtime image.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx

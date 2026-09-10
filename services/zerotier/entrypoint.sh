@@ -15,6 +15,43 @@ ensure_token_permissions() {
     fi
 }
 
+# Older controller images sometimes persist a final LF/CRLF in the token file.
+# ZeroTier's local API treats that byte as part of the token and returns 401,
+# which in turn makes the container health check fail after a data migration.
+# Normalize only the trailing line ending before starting the daemon; reject
+# embedded whitespace instead of silently changing a malformed credential.
+normalize_token_file() {
+    token_file="$state_dir/authtoken.secret"
+    if [ ! -f "$token_file" ]; then
+        return 0
+    fi
+
+    normalized=$(sed '$s/\r$//' "$token_file") || {
+        echo "Unable to read authtoken.secret" >&2
+        return 1
+    }
+    case "$normalized" in
+        ''|*[!A-Za-z0-9._-]*)
+            echo "Invalid authtoken.secret format" >&2
+            return 1
+            ;;
+    esac
+
+    original_size=$(wc -c < "$token_file")
+    normalized_size=$(printf '%s' "$normalized" | wc -c)
+    if [ "$original_size" -eq "$normalized_size" ]; then
+        return 0
+    fi
+
+    temporary="$state_dir/.authtoken.secret.$$"
+    (umask 027; printf '%s' "$normalized" > "$temporary")
+    chown 0:1001 "$temporary"
+    chmod 0640 "$temporary"
+    mv -f "$temporary" "$token_file"
+}
+
+normalize_token_file
+
 /usr/sbin/zerotier-one -p9993 &
 daemon_pid=$!
 permissions_pid=""
