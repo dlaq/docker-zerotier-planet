@@ -18,10 +18,10 @@ RUN git init . \
     && git apply --check /tmp/caddy-cel-go-0.29.patch \
     && git apply /tmp/caddy-cel-go-0.29.patch \
     && go get golang.org/x/crypto@v0.56.0 \
-              golang.org/x/net@v0.57.0 \
+              golang.org/x/net@v0.58.0 \
               golang.org/x/text@v0.41.0 \
               github.com/google/cel-go@v0.29.0 \
-              google.golang.org/grpc@v1.83.1 \
+              google.golang.org/grpc@v1.83.2 \
     && go mod tidy \
     && install -d /out \
     && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/caddy ./cmd/caddy \
