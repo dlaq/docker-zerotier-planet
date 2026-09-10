@@ -527,6 +527,8 @@ services:
       ztnet:
         condition: service_healthy
     read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1002,gid=1002
     security_opt:
       - no-new-privileges:true
     cap_drop:
