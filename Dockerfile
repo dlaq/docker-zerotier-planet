@@ -59,7 +59,7 @@ RUN set -eu; \
     } > /build/runtime-root/var/lib/dpkg/status; \
     install -d -m 2770 -o root -g 1001 /build/runtime-root/var/lib/zerotier-one; \
     install -d -m 0755 /build/runtime-root/bin /build/runtime-root/usr/bin /build/runtime-root/usr/sbin; \
-    for applet in sh mkdir chown chmod kill sleep find cat wget; do ln -s /bin/busybox "/build/runtime-root/bin/$applet"; done; \
+    for applet in sh mkdir chown chmod kill sleep find cat wget sed wc mv; do ln -s /bin/busybox "/build/runtime-root/bin/$applet"; done; \
     ln -s /bin/busybox /build/runtime-root/usr/bin/env; \
     ln -s zerotier-one /build/runtime-root/usr/sbin/zerotier-cli; \
     ln -s zerotier-one /build/runtime-root/usr/sbin/zerotier-idtool
