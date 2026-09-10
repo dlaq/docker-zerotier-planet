@@ -68,25 +68,28 @@ SPDX SBOM 和多架构 manifest 合并，最终状态为 `Success`。
 以上是发布清单和 CI 扫描证据；目标 VPS 仍需单独验收防火墙、证书、动态 DNS、Planet
 端点以及 `DIRECT/RELAY/TUNNELED` 网络矩阵。
 
-## 2026-09-10 测试 VPS 实际验收
+## 2026-09-10 测试 VPS 实际迁移验收
 
-该远端明确是测试环境，本次按要求先停止编排并删除其 `./data/`，未制作备份；因此旧
-Controller identity、旧网络和成员数据不再保留。随后使用 v1.1.4 Compose 全新初始化，
-再执行一次只换镜像的强制重建，未再次删除数据。
+该 ARM64 测试 VPS 已从旧项目目录导入 Controller 数据，并使用 v1.1.7 Compose
+完成一次只换镜像的强制重建；没有在这次验收中删除导入后的数据。旧 Controller
+identity 为 `f198c93138`，旧网络 `f198c93138b38cae`（GHMCH）及其 17 个成员（16 个
+已授权）均可由 ZTNet 查询。旧自定义 Planet/Moon 文件已保存在 `legacy-dist/`，生产
+切换时可按部署文档恢复原 Planet，避免无谓地更换客户端。
 
-- `docker compose up -d --force-recreate --wait` 成功：5 个常驻服务健康，3 个一次性
-  初始化服务退出码为 0。
-- 通过公网 HTTPS 管理入口访问 `/auth/login` 返回 200；使用管理员会话创建网络并查询
-  网络列表成功，数据库重建后网络记录仍保留。
-- ZeroTier Controller 内部认证请求返回 200；重启 ZeroTier 后 `authtoken.secret`
-  仍为 `root:1001/0640`，ZTNet 与 ZeroTier 均保持健康。
-- 实际监听仅为测试配置声明的 TCP/3443（管理端）、TCP/4443（relay）和 UDP/9993
-  （ZeroTier）；ZTNet/Controller/数据库端口未映射到宿主机。
+- `docker compose up -d --force-recreate --wait --wait-timeout 300` 成功：5 个常驻服务
+  健康，3 个一次性初始化服务退出码为 0。
+- 通过公网 HTTPS 管理入口访问 `/auth/login` 返回 200；迁移后的网络和成员查询成功。
+- ZTNet v1.1.7 内含 PostgreSQL 17 客户端；管理员备份接口实际创建数据库备份成功，
+  不需要 Docker Socket。
+- ZeroTier 版本为 1.16.2、Planet world ID 为 149604618；控制器 API 健康，
+  `authtoken.secret` 规范化后为 32 字节、`root:1001/0640`。
+- 当前测试配置实际监听 TCP/3443（管理端）、TCP/4443（relay）和 UDP/9994
+  （ZeroTier）；ZTNet/Controller/数据库容器端口未直接映射到宿主机。
 - Caddy 在 scratch 运行层无法把内部 CA 安装到宿主机信任库，会记录
   `install is not supported on this system`；自签名 HTTPS 和健康检查正常，这不是启动
   失败或权限泄漏。浏览器仍需手动信任该自签名 CA。
 
-上述是单台测试 VPS 的应用和容器验收，不等同于两台客户端在不同运营商/NAT 下的
+上述是单台测试 VPS 的迁移、应用和容器验收，不等同于两台客户端在不同运营商/NAT 下的
 `DIRECT`、`RELAY`、`TUNNELED` 全量网络矩阵；该矩阵仍应在生产网络中执行。
 
 ## 历史发布审计
