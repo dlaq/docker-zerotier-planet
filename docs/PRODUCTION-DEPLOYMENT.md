@@ -122,7 +122,7 @@ name: ztplanet
 
 services:
   postgres:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.5@sha256:96924f1608af633f64b45afa0be0c91318ed099514ab9654f859918098061e10
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.7@sha256:9566ab5703ec657de0a5bb8f66a618490e85a0cd7566bb8884f745b5d13627f1
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -171,7 +171,7 @@ services:
   # 在 ZeroTier 首次启动前生成受控的 local.conf。该文件允许 ZTNet 容器
   # (172.31.255.3) 访问 Controller API；不写入 token，也不覆盖其它设置。
   zerotier-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.5@sha256:561bbc61cfb934f50650b7e0723aadb7e462c568c5b59e5642d563669f72964e
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.7@sha256:eda472b65d5c281f1d2efd719d816bd57b2b97a281f4a7dd9f65d95daae0cf37
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -252,7 +252,7 @@ services:
     cpus: 0.25
 
   zerotier:
-    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.5@sha256:dd5903ff2425717d72a0f54d0298c480e4eb9a134f6dfd1c6469b9afd4752332
+    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.7@sha256:79d87905fe0425974bd741893ccf7f1912471790315d01ba4796b933d2527cf5
     pull_policy: always
     restart: unless-stopped
     volumes:
@@ -293,7 +293,7 @@ services:
       start_period: 20s
 
   ztnet-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.5@sha256:561bbc61cfb934f50650b7e0723aadb7e462c568c5b59e5642d563669f72964e
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.7@sha256:eda472b65d5c281f1d2efd719d816bd57b2b97a281f4a7dd9f65d95daae0cf37
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -340,7 +340,7 @@ services:
     cpus: 0.25
 
   ztnet:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.5@sha256:561bbc61cfb934f50650b7e0723aadb7e462c568c5b59e5642d563669f72964e
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.7@sha256:eda472b65d5c281f1d2efd719d816bd57b2b97a281f4a7dd9f65d95daae0cf37
     pull_policy: always
     restart: unless-stopped
     user: "1001:1001"
@@ -423,7 +423,7 @@ services:
       start_period: 90s
 
   gateway-init:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.5@sha256:96924f1608af633f64b45afa0be0c91318ed099514ab9654f859918098061e10
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.7@sha256:9566ab5703ec657de0a5bb8f66a618490e85a0cd7566bb8884f745b5d13627f1
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -524,7 +524,7 @@ services:
       - CHOWN
 
   gateway:
-    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.5@sha256:4411aa710c3307fc244e62bd00170bc5eec9bca9762f86bdae6a1eb7cab828bf
+    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.7@sha256:c8263934e8550fe6c958d1ee8c96bc575879fb1d0521b071eae8f79081e6e9f5
     pull_policy: always
     restart: unless-stopped
     user: "1002:1002"
@@ -565,7 +565,7 @@ services:
       start_period: 10s
 
   relay:
-    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.5@sha256:d49ad8c2f07a13c47667fd6bdfeee976026846980788dc3ca71c59b29117c464
+    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.7@sha256:76affe3a7523283683f000e6d337be06201f6231fb6645916ba9f2f0d73addc3
     pull_policy: always
     profiles: ["relay"]
     restart: unless-stopped
@@ -641,7 +641,7 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 
 1Panel 不会因为 GitHub 仓库更新而自动改写已经保存的 Compose；仅点击“启动”也可能继续
 复用本机旧镜像。先从本仓库当前 `master` 重新复制完整 Compose（或在 1Panel 编辑器中
-整段替换），确认 `image:` 行全部为 `*-v1.1.5@sha256:...`，不是旧的 `v1.1.0` 或 `latest`。
+整段替换），确认 `image:` 行全部为 `*-v1.1.7@sha256:...`，不是旧的 `v1.1.0` 或 `latest`。
 
 在 1Panel 主机终端执行下面命令，`compose_dir` 替换为 1Panel 详情中显示的实际目录。命令
 只删除容器和网络，不删除 `./data/`，也不要添加 `-v`：
@@ -941,6 +941,8 @@ Compose 文本”的交付范围。两种模式不能在文档中混写。
 “备份与恢复”页在纯 Compose 模式下可以创建、列出、下载和删除备份；在线恢复会被禁用，
 因为应用容器不应拥有 Docker Socket、宿主机根目录或停止 Controller 的权限。恢复请在维护
 窗口执行仓库 `scripts/restore.sh` 提供的受控主机命令，并在恢复前停止整个编排。
+v1.1.7 的 ZTNet 镜像内置 PostgreSQL 17 客户端，因此“包含数据库”备份在无 Docker Socket
+的最小容器中也能执行；不要用旧版镜像验证该按钮。
 
 ### Message Pusher 通知
 
@@ -1068,6 +1070,32 @@ sudo sh -c 'cd /var/backups/ztplanet-before-compose && sha256sum -c SHA256SUMS'
 全部 `./data/` 目录，同时从密码管理器复制原 `ZTPLANET_DB_PASSWORD` 和 `ZTPLANET_AUTH_SECRET`。新机
 必须使用完全相同的两个值恢复，不能在迁移时重新生成。
 
+### 从测试机切换到原生产 IP 且不替换客户端 Planet
+
+如果测试机是在导入旧 Controller 后运行的，不能把测试机正在使用的新版 `planet` 文件
+不加检查地直接用于生产。测试机为了连通测试地址，可能把测试公网 IP 写进了根节点列表；
+而旧客户端仍保存原生产 Planet。确认原生产公网地址和端口仍为 `61.178.71.30/9994` 后，
+在停止测试编排之后，先在生产编排目录执行：
+
+```bash
+cd /生产机/1Panel编排目录
+test -s data/ztnet-planet/legacy-dist/planet
+cp data/ztnet-planet/legacy-dist/planet data/zerotier/planet
+cp data/ztnet-planet/legacy-dist/planet data/ztnet-planet/planet
+cp data/ztnet-planet/legacy-dist/planet data/ztnet-planet/zt-mkworld/planet.custom
+```
+
+然后确认 `.env`（或 1Panel 环境变量）中的 `ZT_PUBLIC_PORT=9994`，云安全组和宿主机防火墙
+放行 UDP/9994，并保持导入的 `identity.secret`、`current.c25519`、`previous.c25519` 和
+Controller 网络目录不变。`ZTPLANET_DB_PASSWORD`、`ZTPLANET_AUTH_SECRET` 也必须与测试机
+相同；否则 PostgreSQL 原始目录无法登录，Message Pusher 等加密字段也无法解密。先停止测试机
+再启动生产机，绝不能让两台机器同时运行同一 Controller 身份。
+
+这样生产根节点继续使用旧客户端已安装的 Planet/Moon，客户端无需重新安装或替换 Planet。
+如果生产公网 IP、UDP 端口或 Controller 身份任一改变，则不能作此保证：应保留旧根节点并
+生成包含新旧端点的新版 Planet，向客户端分发后再下线旧端点。若测试机没有保存
+`legacy-dist/planet`，请从原生产备份中恢复它；不要用 `latest` 或只修改 Docker 端口代替。
+
 ## 十二、备份、升级和验收
 
 新 Compose 的持久化数据全部位于编排目录下的 bind 目录：
@@ -1159,7 +1187,7 @@ sudo cat "$restore_dir/ztnet.pgdump" | sudo docker exec -i "$postgres_container"
 恢复前必须保证目标 `./data/` 目录可被替换，且不能同时运行新旧两个 Controller。升级时先
 完成上述停机备份，再复制新版本交付文档中的整个 Compose 代码块，保持原来的两个秘密值
 不变，然后在 1Panel 执行“拉取并重建”。不要使用 `latest`，不要自行删除镜像摘要，也不要
-只升级五个组件中的一部分。当前文档固定的是已通过双架构安全门禁的 `v1.1.5`；仅当收到
+只升级五个组件中的一部分。当前文档固定的是已通过双架构安全门禁的 `v1.1.7`；仅当收到
 新版完整文档并核对版本说明后才替换。
 
 验收至少包括：

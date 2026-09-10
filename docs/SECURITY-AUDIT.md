@@ -47,6 +47,27 @@ SPDX SBOM 和多架构 manifest 合并，最终状态为 `Success`。五个正�
 清单摘要由 Docker Hub manifest 实际查询核对；这不替代目标 VPS 的防火墙、动态 DNS、
 证书、端口映射和运行时配置复核。
 
+## 2026-09-10 v1.1.7 发布复核
+
+v1.1.7 修复了两项迁移/管理缺陷：ZeroTier scratch 运行层会在启动前规范化旧版
+`authtoken.secret` 的尾部换行，避免迁移后 Controller API 健康检查返回 401；ZTNet
+镜像内置 PostgreSQL 17 客户端，备份页可以在不挂载 Docker Socket 的前提下创建数据库
+备份；未关联网络分配接口现在校验目标管理员并实际写入所选用户。GitHub Actions 运行
+[`34470568649`](https://github.com/dlaq/docker-zerotier-planet/actions/runs/34470568649)
+完成源码门禁、原生 AMD64/ARM64 构建、集成烟测、Trivy Medium/High/Critical 扫描、
+SPDX SBOM 和多架构 manifest 合并，最终状态为 `Success`。
+
+| 正式标签 | 多架构清单摘要 | 平台 |
+|---|---|---|
+| `zerotier-v1.1.7` | `sha256:79d87905fe0425974bd741893ccf7f1912471790315d01ba4796b933d2527cf5` | amd64、arm64 |
+| `ztnet-v1.1.7` | `sha256:eda472b65d5c281f1d2efd719d816bd57b2b97a281f4a7dd9f65d95daae0cf37` | amd64、arm64 |
+| `relay-v1.1.7` | `sha256:76affe3a7523283683f000e6d337be06201f6231fb6645916ba9f2f0d73addc3` | amd64、arm64 |
+| `postgres-v1.1.7` | `sha256:9566ab5703ec657de0a5bb8f66a618490e85a0cd7566bb8884f745b5d13627f1` | amd64、arm64 |
+| `gateway-v1.1.7` | `sha256:c8263934e8550fe6c958d1ee8c96bc575879fb1d0521b071eae8f79081e6e9f5` | amd64、arm64 |
+
+以上是发布清单和 CI 扫描证据；目标 VPS 仍需单独验收防火墙、证书、动态 DNS、Planet
+端点以及 `DIRECT/RELAY/TUNNELED` 网络矩阵。
+
 ## 2026-09-10 测试 VPS 实际验收
 
 该远端明确是测试环境，本次按要求先停止编排并删除其 `./data/`，未制作备份；因此旧
