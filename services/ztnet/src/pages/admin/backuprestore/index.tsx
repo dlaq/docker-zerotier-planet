@@ -1,10 +1,9 @@
 import { useTranslations } from "next-intl";
+import { getServerSideProps } from "~/server/getServerSideProps";
 
-// Data restore is intentionally delegated to the root-owned, validated host
-// workflow. Keep this upstream page out of the supported UI surface.
-export const getServerSideProps = () => ({
-	redirect: { destination: "/admin?tab=system-exposure", permanent: false },
-});
+// Backups can be listed, created, downloaded and deleted from the authenticated
+// UI. Restore remains a root-owned host operation so an uploaded archive can
+// never replace controller files or the database from an application process.
 import { LayoutAdminAuthenticated } from "~/components/layouts/layout";
 import { api } from "~/utils/api";
 import { type ReactElement, useState, useRef } from "react";
@@ -17,6 +16,7 @@ import { useModalStore } from "~/utils/store";
 
 const BackupRestore = () => {
 	const t = useTranslations("admin.backupRestore");
+	const restoreDisabled = true;
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const callModal = useModalStore((state) => state.callModal);
 
@@ -361,6 +361,12 @@ const BackupRestore = () => {
 
 	return (
 		<main className="flex w-full flex-col justify-center space-y-10 bg-base-100 p-5 sm:p-3 xl:w-6/12">
+			<div className="alert alert-info text-sm">
+				<span>
+					备份创建、下载和删除已启用。在线恢复暂时保持关闭：恢复会替换数据库/控制器文件，只能由宿主机
+					root 按校验过的备份目录执行，避免 Web 进程被利用后覆盖系统数据。
+				</span>
+			</div>
 			{/* Create Backup Section */}
 			<MenuSectionDividerWrapper title={t("createBackup.sectionTitle")}>
 				<div className="pb-5">
@@ -471,7 +477,7 @@ const BackupRestore = () => {
 													<button
 														className="btn btn-sm btn-outline btn-success"
 														onClick={() => handleRestoreFromExisting(backup.fileName)}
-														disabled={restoringBackup}
+														disabled={restoreDisabled || restoringBackup}
 													>
 														{t("existingBackups.table.restore")}
 													</button>
@@ -527,6 +533,7 @@ const BackupRestore = () => {
 									type="checkbox"
 									className="checkbox checkbox-sm checkbox-primary"
 									checked={restoreOptions.restoreDatabase}
+									disabled={restoreDisabled}
 									onChange={(e) =>
 										setRestoreOptions((prev) => ({
 											...prev,
@@ -543,6 +550,7 @@ const BackupRestore = () => {
 									type="checkbox"
 									className="checkbox checkbox-sm checkbox-primary"
 									checked={restoreOptions.restoreZerotier}
+									disabled={restoreDisabled}
 									onChange={(e) =>
 										setRestoreOptions((prev) => ({
 											...prev,
@@ -564,6 +572,7 @@ const BackupRestore = () => {
 							accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz"
 							className="file-input file-input-bordered w-full file-input-sm"
 							onChange={handleFileUpload}
+							disabled={restoreDisabled}
 						/>
 					</div>
 
@@ -595,6 +604,7 @@ const BackupRestore = () => {
 						className={`btn btn-warning btn-sm ${restoringBackup || uploadingBackup ? "loading" : ""}`}
 						onClick={handleRestoreFromUpload}
 						disabled={
+							restoreDisabled ||
 							!uploadedFile ||
 							restoringBackup ||
 							uploadingBackup ||
@@ -615,4 +625,5 @@ BackupRestore.getLayout = function getLayout(page: ReactElement) {
 	return <LayoutAdminAuthenticated>{page}</LayoutAdminAuthenticated>;
 };
 
+export { getServerSideProps };
 export default BackupRestore;

@@ -2,7 +2,11 @@ import { createTRPCRouter, adminRoleProtectedRoute } from "~/server/api/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as ztController from "~/utils/ztApi";
-import { mailTemplateMap, sendMailWithTemplate } from "~/utils/mail";
+import {
+	mailTemplateMap,
+	sendMailWithTemplate,
+	validateMessagePusherUrl,
+} from "~/utils/mail";
 import { type GlobalOptions, Role } from "@prisma/client";
 import { throwError } from "~/server/helpers/errorHandler";
 import type { ZTControllerNodeStatus } from "~/types/ztController";
@@ -14,8 +18,13 @@ import axios from "axios";
 import { extractEndpointPorts, updateLocalConf } from "~/utils/planet";
 import jwt from "jsonwebtoken";
 import { networkRouter } from "./networkRouter";
-import { decrypt, encrypt, generateInstanceSecret } from "~/utils/encryption";
-import { SMTP_SECRET } from "~/utils/encryption";
+import {
+	decrypt,
+	encrypt,
+	generateInstanceSecret,
+	MESSAGE_PUSHER_SECRET,
+	SMTP_SECRET,
+} from "~/utils/encryption";
 import { ZT_FOLDER } from "~/utils/ztApi";
 import { isRunningInDocker } from "~/utils/docker";
 import { detectServerMajor, resolvePgDumpPath } from "~/utils/pgVersion";
@@ -33,9 +42,13 @@ import {
 } from "~/server/api/services/credentialAccountService";
 
 type WithError<T> = T & { error?: boolean; message?: string };
-type GlobalOptionsResponse = WithError<Omit<GlobalOptions, "smtpPassword">> & {
+type GlobalOptionsResponse = WithError<
+	Omit<GlobalOptions, "smtpPassword" | "messagePusherToken">
+> & {
 	smtpPassword: null;
 	hasSmtpPassword: boolean;
+	messagePusherToken: null;
+	hasMessagePusherToken: boolean;
 };
 
 export const adminRouter = createTRPCRouter({
@@ -468,6 +481,8 @@ export const adminRouter = createTRPCRouter({
 					...options,
 					smtpPassword: null,
 					hasSmtpPassword: Boolean(options.smtpPassword),
+					messagePusherToken: null,
+					hasMessagePusherToken: Boolean(options.messagePusherToken),
 				} as GlobalOptionsResponse;
 			}
 			return null;
@@ -583,9 +598,19 @@ export const adminRouter = createTRPCRouter({
 				smtpRequireTLS: z.boolean().optional(),
 				smtpEncryption: z.enum(["NONE", "SSL", "STARTTLS"]).optional(),
 				smtpUseAuthentication: z.boolean().optional(),
+				messagePusherEnabled: z.boolean().optional(),
+				messagePusherUrl: z.string().max(512).nullable().optional(),
+				messagePusherUsername: z.string().max(128).nullable().optional(),
+				messagePusherToken: z.string().max(4096).nullable().optional(),
+				messagePusherChannel: z.string().max(128).nullable().optional(),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
+			if (input.messagePusherUrl) {
+				// Validate before persisting so a malformed origin cannot break all
+				// background notifications later.
+				validateMessagePusherUrl(input.messagePusherUrl);
+			}
 			// Handle password: encrypt if set, clear if null, ignore if undefined
 			let passwordUpdate: { smtpPassword?: string | null } = {};
 			if (input.smtpPassword === null) {
@@ -599,7 +624,18 @@ export const adminRouter = createTRPCRouter({
 			}
 			// If undefined, don't include in update (keeps existing value)
 
-			const { smtpPassword, ...restInput } = input;
+			const { smtpPassword, messagePusherToken, ...restInput } = input;
+			let messagePusherTokenUpdate: { messagePusherToken?: string | null } = {};
+			if (messagePusherToken === null) {
+				messagePusherTokenUpdate = { messagePusherToken: null };
+			} else if (messagePusherToken) {
+				messagePusherTokenUpdate = {
+					messagePusherToken: encrypt(
+						messagePusherToken,
+						generateInstanceSecret(MESSAGE_PUSHER_SECRET),
+					),
+				};
+			}
 
 			return await ctx.prisma.globalOptions.update({
 				where: {
@@ -608,6 +644,7 @@ export const adminRouter = createTRPCRouter({
 				data: {
 					...restInput,
 					...passwordUpdate,
+					...messagePusherTokenUpdate,
 				},
 			});
 		}),

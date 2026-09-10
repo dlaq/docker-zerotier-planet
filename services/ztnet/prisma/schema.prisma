@@ -41,6 +41,13 @@ model GlobalOptions {
   // New email configuration fields
   smtpEncryption                     String  @default("STARTTLS") // "NONE", "SSL", "STARTTLS"
   smtpUseAuthentication              Boolean @default(true)
+  // Message Pusher notification channel. The token is encrypted at rest with
+  // the instance secret and is never returned to the browser.
+  messagePusherEnabled               Boolean @default(false)
+  messagePusherUrl                   String?
+  messagePusherUsername              String?
+  messagePusherToken                 String?
+  messagePusherChannel               String?
   inviteUserTemplate                 Json?
   inviteAdminTemplate                Json?
   inviteOrganizationTemplate         Json?

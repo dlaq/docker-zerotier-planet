@@ -300,6 +300,22 @@ const Sidebar = (): JSX.Element => {
 							</li>
 							<li className="my-px">
 								<Link
+									href="/admin?tab=system-exposure"
+									className={`flex h-10 flex-row items-center rounded-lg px-3
+									${
+										router.pathname === "/admin" && router.query.tab === "system-exposure"
+											? "bg-gray-100 text-gray-700"
+											: "hover:bg-slate-700"
+									}`}
+								>
+									<span className="flex items-center justify-center text-lg text-gray-400">
+										⚙
+									</span>
+									<span className="ml-3">System &amp; Exposure / 系统与暴露面</span>
+								</Link>
+							</li>
+							<li className="my-px">
+								<Link
 									href="/admin?tab=users"
 									className={`flex h-10 flex-row items-center rounded-lg px-3
               ${
@@ -332,11 +348,10 @@ const Sidebar = (): JSX.Element => {
 									href="/admin?tab=notification"
 									className={`flex h-10 flex-row items-center rounded-lg px-3
 									${
-													router.pathname === "/admin" &&
-													router.query.tab === "notification"
-														? "bg-gray-100 text-gray-700"
-														: "hover:bg-slate-700"
-												}`}
+										router.pathname === "/admin" && router.query.tab === "notification"
+											? "bg-gray-100 text-gray-700"
+											: "hover:bg-slate-700"
+									}`}
 								>
 									<span className="flex items-center justify-center text-lg text-gray-400">
 										<svg
@@ -362,11 +377,10 @@ const Sidebar = (): JSX.Element => {
 									href="/admin?tab=controller"
 									className={`flex h-10 flex-row items-center rounded-lg px-3
 									${
-													router.pathname === "/admin" &&
-													router.query.tab === "controller"
-														? "bg-gray-100 text-gray-700"
-														: "hover:bg-slate-700"
-												}`}
+										router.pathname === "/admin" && router.query.tab === "controller"
+											? "bg-gray-100 text-gray-700"
+											: "hover:bg-slate-700"
+									}`}
 								>
 									<span className="flex items-center justify-center text-lg text-gray-400">
 										<svg
@@ -392,11 +406,10 @@ const Sidebar = (): JSX.Element => {
 									href="/admin?tab=organization"
 									className={`flex h-10 flex-row items-center rounded-lg px-3
 									${
-													router.pathname === "/admin" &&
-													router.query.tab === "organization"
-														? "bg-gray-100 text-gray-700"
-														: "hover:bg-slate-700"
-												}`}
+										router.pathname === "/admin" && router.query.tab === "organization"
+											? "bg-gray-100 text-gray-700"
+											: "hover:bg-slate-700"
+									}`}
 								>
 									<span className="flex items-center justify-center text-lg text-gray-400">
 										<svg
@@ -422,11 +435,10 @@ const Sidebar = (): JSX.Element => {
 									href="/admin?tab=backup-restore"
 									className={`flex h-10 flex-row items-center rounded-lg px-3
 									${
-													router.pathname === "/admin" &&
-													router.query.tab === "backup-restore"
-														? "bg-gray-100 text-gray-700"
-														: "hover:bg-slate-700"
-												}`}
+										router.pathname === "/admin" && router.query.tab === "backup-restore"
+											? "bg-gray-100 text-gray-700"
+											: "hover:bg-slate-700"
+									}`}
 								>
 									<span className="flex items-center justify-center text-lg text-gray-400">
 										<svg

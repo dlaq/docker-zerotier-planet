@@ -1,9 +1,14 @@
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
 import type { GlobalOptions } from "@prisma/client";
 
-type SettingsOptionsResponse = Omit<GlobalOptions, "smtpPassword"> & {
+type SettingsOptionsResponse = Omit<
+	GlobalOptions,
+	"smtpPassword" | "messagePusherToken"
+> & {
 	smtpPassword: null;
 	hasSmtpPassword: boolean;
+	messagePusherToken: null;
+	hasMessagePusherToken: boolean;
 };
 
 export const settingsRouter = createTRPCRouter({
@@ -21,6 +26,8 @@ export const settingsRouter = createTRPCRouter({
 					...options,
 					smtpPassword: null,
 					hasSmtpPassword: Boolean(options.smtpPassword),
+					messagePusherToken: null,
+					hasMessagePusherToken: Boolean(options.messagePusherToken),
 				} as SettingsOptionsResponse;
 			}
 			return null;

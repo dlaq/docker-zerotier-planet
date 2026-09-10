@@ -14,13 +14,15 @@ import MetaTags from "~/components/shared/metaTags";
 import Link from "next/link";
 import { api } from "~/utils/api";
 import SystemExposure from "~/components/adminPage/system/systemExposure";
+import BackupRestore from "./backuprestore";
 
 const AdminSettings = ({ orgIds }) => {
 	const { data: globalOptions } = api.settings.getAllOptions.useQuery();
 	const title = `${globalOptions?.siteName} - Admin Settings`;
 
 	const router = useRouter();
-	const { tab = "members" } = router.query;
+	const requestedTab =
+		typeof router.query.tab === "string" ? router.query.tab : "system-exposure";
 	const t = useTranslations("sidebar");
 
 	useOrganizationWebsocket(orgIds);
@@ -66,7 +68,13 @@ const AdminSettings = ({ orgIds }) => {
 			value: "organization",
 			component: <Organization />,
 		},
+		{
+			name: "Backup / 备份恢复",
+			value: "backup-restore",
+			component: <BackupRestore />,
+		},
 	];
+	const activeTab = tabs.find((item) => item.value === requestedTab) ?? tabs[0];
 
 	return (
 		<div className="animate-fadeIn py-5 sm:w-11/12 mx-auto">
@@ -78,14 +86,14 @@ const AdminSettings = ({ orgIds }) => {
 						href={`/admin?tab=${t.value}`}
 						role="tab"
 						className={`text-md uppercase tab ${
-							t.value === tab ? "tab-active" : "text-gray-600"
+							t.value === activeTab.value ? "tab-active" : "text-gray-600"
 						}`}
 					>
 						{t.name}
 					</Link>
 				))}
 			</div>
-			{tabs.find((t) => t.value === tab)?.component}
+			{activeTab.component}
 		</div>
 	);
 };

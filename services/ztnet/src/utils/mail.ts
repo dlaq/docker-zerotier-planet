@@ -1,6 +1,11 @@
 import nodemailer, { type TransportOptions } from "nodemailer";
 import { throwError } from "~/server/helpers/errorHandler";
-import { SMTP_SECRET, decrypt, generateInstanceSecret } from "./encryption";
+import {
+	MESSAGE_PUSHER_SECRET,
+	SMTP_SECRET,
+	decrypt,
+	generateInstanceSecret,
+} from "./encryption";
 import { prisma } from "~/server/db";
 import ejs from "ejs";
 import { GlobalOptions, UserOptions } from "@prisma/client";
@@ -133,6 +138,151 @@ interface EmailOptions {
 	sendInBackground?: boolean;
 }
 
+export interface MessagePusherMessage {
+	title: string;
+	content: string;
+}
+
+/**
+ * Validate the administrator-supplied Message Pusher origin.  The origin is
+ * intentionally allowed to be an internal HTTP service because a self-hosted
+ * message-pusher is a supported deployment.  Credentials, query strings and
+ * fragments are rejected so a token can never be accidentally put in a URL.
+ */
+export function validateMessagePusherUrl(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed || trimmed.length > 512) {
+		throw new Error("Message Pusher URL is required and must be at most 512 characters");
+	}
+	let parsed: URL;
+	try {
+		parsed = new URL(trimmed);
+	} catch {
+		throw new Error("Message Pusher URL must be an absolute http(s) URL");
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+		throw new Error("Message Pusher URL must use http or https");
+	}
+	if (
+		!parsed.hostname ||
+		parsed.username ||
+		parsed.password ||
+		parsed.search ||
+		parsed.hash
+	) {
+		throw new Error(
+			"Message Pusher URL must not contain credentials, query parameters, or fragments",
+		);
+	}
+	return parsed.toString().replace(/\/+$/, "");
+}
+
+function decryptStoredSecret(value: string, context: string): string {
+	try {
+		// A value without the encrypted iv:ciphertext form can only be a legacy
+		// administrator-supplied value.  Accept it for migration, but all values
+		// written by the UI are encrypted.
+		return value.includes(":") ? decrypt(value, generateInstanceSecret(context)) : value;
+	} catch {
+		throw new Error(
+			"Stored Message Pusher token cannot be decrypted; please enter it again",
+		);
+	}
+}
+
+function messagePusherEndpoint(baseUrl: string, username: string): URL {
+	const normalizedUrl = validateMessagePusherUrl(baseUrl);
+	if (!username || username.length > 128 || /[\u0000-\u001f\u007f]/.test(username)) {
+		throw new Error(
+			"Message Pusher username is required and contains invalid characters",
+		);
+	}
+	const parsed = new URL(normalizedUrl);
+	const basePath = parsed.pathname.replace(/\/+$/, "");
+	parsed.pathname = `${basePath}/push/${encodeURIComponent(username)}`;
+	parsed.search = "";
+	parsed.hash = "";
+	return parsed;
+}
+
+function htmlToText(value: string): string {
+	return value
+		.replace(/<br\s*\/?>(\r?\n)?/gi, "\n")
+		.replace(/<\/p\s*>/gi, "\n")
+		.replace(/<[^>]*>/g, "")
+		.replace(/&nbsp;/gi, " ")
+		.replace(/&amp;/gi, "&")
+		.replace(/&lt;/gi, "<")
+		.replace(/&gt;/gi, ">")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
+/** Send one notification to the configured message-pusher instance. */
+export async function sendMessagePusher(
+	globalOptions: GlobalOptions,
+	message: MessagePusherMessage,
+): Promise<void> {
+	if (!globalOptions.messagePusherEnabled) {
+		throw new Error("Message Pusher is disabled");
+	}
+	if (!globalOptions.messagePusherUrl || !globalOptions.messagePusherUsername) {
+		throw new Error("Message Pusher URL and username are required");
+	}
+	if (!globalOptions.messagePusherToken) {
+		throw new Error("Message Pusher token is required");
+	}
+
+	const endpoint = messagePusherEndpoint(
+		globalOptions.messagePusherUrl,
+		globalOptions.messagePusherUsername,
+	);
+	const token = decryptStoredSecret(
+		globalOptions.messagePusherToken,
+		MESSAGE_PUSHER_SECRET,
+	);
+	if (!token || token.length > 4096) {
+		throw new Error("Message Pusher token is empty or too long");
+	}
+	const channel = globalOptions.messagePusherChannel?.trim();
+	if (channel && (channel.length > 128 || /[\u0000-\u001f\u007f]/.test(channel))) {
+		throw new Error("Message Pusher channel contains invalid characters");
+	}
+
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 10_000);
+	try {
+		const response = await fetch(endpoint, {
+			method: "POST",
+			redirect: "error",
+			headers: {
+				"content-type": "application/json",
+				accept: "application/json, text/plain;q=0.5",
+			},
+			body: JSON.stringify({
+				title: message.title.slice(0, 512),
+				description: message.content.slice(0, 32_768),
+				content: message.content.slice(0, 32_768),
+				token,
+				...(channel ? { channel } : {}),
+			}),
+			signal: controller.signal,
+		});
+		// Do not include response text: a misconfigured push service may echo
+		// credentials or administrator data in its error response.
+		if (!response.ok) {
+			throw new Error(`Message Pusher returned HTTP ${response.status}`);
+		}
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error("Message Pusher request timed out");
+		}
+		throw error instanceof Error ? error : new Error("Message Pusher request failed");
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
 export async function sendMailWithTemplate(
 	templateKey: MailTemplateKey,
 	options: EmailOptions,
@@ -155,32 +305,56 @@ export async function sendMailWithTemplate(
 
 	const renderedTemplate = await renderTemplate(template, options.templateData);
 
-	const transporter = await createTransporter();
-
 	const parsedTemplate = parseRenderedTemplate(renderedTemplate);
-
-	const fromAddress = globalOptions.smtpFromName
-		? { name: globalOptions.smtpFromName, address: globalOptions.smtpEmail }
-		: globalOptions.smtpEmail;
+	const smtpConfigured = Boolean(
+		globalOptions.smtpHost && globalOptions.smtpPort && globalOptions.smtpEmail,
+	);
+	const pusherConfigured = Boolean(globalOptions.messagePusherEnabled);
+	if (!smtpConfigured && !pusherConfigured) {
+		throw new Error(
+			"No notification channel is configured. Configure SMTP or Message Pusher in the admin panel.",
+		);
+	}
 
 	const mailOptions = {
-		from: fromAddress,
+		from: globalOptions.smtpFromName
+			? { name: globalOptions.smtpFromName, address: globalOptions.smtpEmail }
+			: globalOptions.smtpEmail,
 		to: options.to,
 		subject: parsedTemplate.subject,
 		html: parsedTemplate.body,
 	};
+	const notificationTasks: Array<() => Promise<void>> = [];
+	if (smtpConfigured) {
+		notificationTasks.push(async () => {
+			const transporter = await createTransporter(globalOptions);
+			await sendEmail(transporter, mailOptions);
+		});
+	}
+	if (pusherConfigured) {
+		notificationTasks.push(() =>
+			sendMessagePusher(globalOptions, {
+				title: parsedTemplate.subject,
+				content: htmlToText(parsedTemplate.body),
+			}),
+		);
+	}
 
 	// If explicit synchronous sending is requested (sendInBackground === false), wait for the result
 	// Otherwise (default), send in background to avoid blocking
 	if (options.sendInBackground === false) {
-		await sendEmail(transporter, mailOptions);
+		await Promise.all(notificationTasks.map((task) => task()));
 	} else {
-		// Run SMTP operation in background
+		// Run configured channels in the background so login/network actions do
+		// not wait for an external mail or push provider.
 		setImmediate(async () => {
 			try {
-				await sendEmail(transporter, mailOptions);
+				await Promise.all(notificationTasks.map((task) => task()));
 			} catch (error) {
-				console.error("Email sending failed:", error);
+				console.error(
+					"Notification delivery failed:",
+					error instanceof Error ? error.message : "unknown error",
+				);
 			}
 		});
 	}
@@ -415,24 +589,28 @@ async function sendEmail(
 	}
 }
 
-export async function createTransporter() {
-	const globalOptions = await prisma.globalOptions.findFirst({
-		where: {
-			id: 1,
-		},
-	});
-	if (!globalOptions.smtpHost || !globalOptions.smtpPort || !globalOptions.smtpEmail) {
+export async function createTransporter(existingOptions?: GlobalOptions) {
+	const globalOptions =
+		existingOptions ||
+		(await prisma.globalOptions.findFirst({
+			where: {
+				id: 1,
+			},
+		}));
+	if (
+		!globalOptions ||
+		!globalOptions.smtpHost ||
+		!globalOptions.smtpPort ||
+		!globalOptions.smtpEmail
+	) {
 		return throwError(
 			"Email is not configured!, you can configure it in the admin panel or ask your administrator to do so.",
 		);
 	}
 
-	if (globalOptions.smtpPassword) {
-		globalOptions.smtpPassword = decrypt(
-			globalOptions.smtpPassword,
-			generateInstanceSecret(SMTP_SECRET),
-		);
-	}
+	const smtpPassword = globalOptions.smtpPassword
+		? decrypt(globalOptions.smtpPassword, generateInstanceSecret(SMTP_SECRET))
+		: undefined;
 
 	const { secure, requireTLS, ignoreTLS } = getSmtpEncryptionConfig({
 		smtpEncryption: globalOptions.smtpEncryption,
@@ -456,7 +634,7 @@ export async function createTransporter() {
 			useAuth && (globalOptions.smtpUsername || globalOptions.smtpPassword)
 				? {
 						user: globalOptions.smtpUsername,
-						pass: globalOptions.smtpPassword,
+						pass: smtpPassword,
 					}
 				: undefined,
 		tls: {

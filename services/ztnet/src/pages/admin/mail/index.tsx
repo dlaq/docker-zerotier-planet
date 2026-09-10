@@ -26,9 +26,15 @@ interface MailFormState {
 	smtpUsername: string;
 	smtpPassword: string;
 	smtpRequireTLS: boolean;
+	messagePusherEnabled: boolean;
+	messagePusherUrl: string;
+	messagePusherUsername: string;
+	messagePusherToken: string;
+	messagePusherChannel: string;
 }
 
 const PASSWORD_PLACEHOLDER = "••••••••";
+const MESSAGE_PUSHER_TOKEN_PLACEHOLDER = "••••••••";
 const COMMON_SMTP_PORTS = [25, 465, 587, 2525];
 
 const Mail = () => {
@@ -70,6 +76,11 @@ const Mail = () => {
 		smtpUsername: "",
 		smtpPassword: "",
 		smtpRequireTLS: false,
+		messagePusherEnabled: false,
+		messagePusherUrl: "",
+		messagePusherUsername: "",
+		messagePusherToken: "",
+		messagePusherChannel: "",
 	});
 
 	// Track if form has unsaved changes
@@ -77,6 +88,7 @@ const Mail = () => {
 
 	// Track if password field has been modified by user
 	const [passwordChanged, setPasswordChanged] = useState(false);
+	const [messagePusherTokenChanged, setMessagePusherTokenChanged] = useState(false);
 
 	// Initialize form state from server data
 	useEffect(() => {
@@ -93,9 +105,15 @@ const Mail = () => {
 				// Don't populate password - use empty string, show placeholder if password exists
 				smtpPassword: "",
 				smtpRequireTLS: options.smtpRequireTLS || false,
+				messagePusherEnabled: options.messagePusherEnabled ?? false,
+				messagePusherUrl: options.messagePusherUrl || "",
+				messagePusherUsername: options.messagePusherUsername || "",
+				messagePusherToken: "",
+				messagePusherChannel: options.messagePusherChannel || "",
 			});
 			setHasChanges(false);
 			setPasswordChanged(false);
+			setMessagePusherTokenChanged(false);
 		}
 	}, [options]);
 
@@ -107,6 +125,12 @@ const Mail = () => {
 	const handlePasswordChange = (value: string) => {
 		setFormState((prev) => ({ ...prev, smtpPassword: value }));
 		setPasswordChanged(true);
+		setHasChanges(true);
+	};
+
+	const handleMessagePusherTokenChange = (value: string) => {
+		setFormState((prev) => ({ ...prev, messagePusherToken: value }));
+		setMessagePusherTokenChanged(true);
 		setHasChanges(true);
 	};
 
@@ -134,6 +158,10 @@ const Mail = () => {
 		if (passwordChanged) {
 			passwordValue = formState.smtpPassword || null; // empty string becomes null to clear
 		}
+		let messagePusherTokenValue: string | null | undefined = undefined;
+		if (messagePusherTokenChanged) {
+			messagePusherTokenValue = formState.messagePusherToken || null;
+		}
 
 		setMailOptions({
 			smtpEmail: formState.smtpEmail || undefined,
@@ -145,9 +173,15 @@ const Mail = () => {
 			smtpUsername: formState.smtpUsername || undefined,
 			smtpPassword: passwordValue,
 			smtpRequireTLS: formState.smtpRequireTLS,
+			messagePusherEnabled: formState.messagePusherEnabled,
+			messagePusherUrl: formState.messagePusherUrl || null,
+			messagePusherUsername: formState.messagePusherUsername || null,
+			messagePusherToken: messagePusherTokenValue,
+			messagePusherChannel: formState.messagePusherChannel || null,
 		});
 		setHasChanges(false);
 		setPasswordChanged(false);
+		setMessagePusherTokenChanged(false);
 	};
 
 	if (loadingOptions) {
@@ -341,6 +375,103 @@ const Mail = () => {
 				)}
 			</MenuSectionDividerWrapper>
 
+			{/* Message Pusher */}
+			<MenuSectionDividerWrapper title="Message Pusher 推送渠道" className="space-y-5">
+				<div className="alert alert-info text-sm">
+					<span>
+						可与 SMTP 同时启用，也可以只启用推送。填写自建 message-pusher 的根地址（例如
+						http://message-pusher:3000）、用户名和访问令牌；请求会发送到
+						/push/&lt;用户名&gt;，令牌仅加密保存在服务器。
+					</span>
+				</div>
+				<div className="flex items-center justify-between">
+					<label>
+						<p className="font-medium">启用 Message Pusher</p>
+						<p className="text-sm text-gray-500">
+							登录、邀请、设备和安全通知会发送到配置的推送渠道。
+						</p>
+					</label>
+					<input
+						type="checkbox"
+						className="checkbox-primary checkbox checkbox-sm"
+						checked={formState.messagePusherEnabled}
+						onChange={(e) => handleInputChange("messagePusherEnabled", e.target.checked)}
+					/>
+				</div>
+				<div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+					<div className="form-control w-full">
+						<label className="label">
+							<span className="label-text">服务地址</span>
+						</label>
+						<input
+							type="url"
+							className="input input-bordered input-sm w-full"
+							placeholder="https://push.example.com"
+							value={formState.messagePusherUrl}
+							onChange={(e) => handleInputChange("messagePusherUrl", e.target.value)}
+						/>
+					</div>
+					<div className="form-control w-full">
+						<label className="label">
+							<span className="label-text">用户名（路径）</span>
+						</label>
+						<input
+							type="text"
+							className="input input-bordered input-sm w-full"
+							placeholder="my-ztnet"
+							value={formState.messagePusherUsername}
+							onChange={(e) => handleInputChange("messagePusherUsername", e.target.value)}
+							autoComplete="off"
+						/>
+					</div>
+				</div>
+				<div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+					<div className="form-control w-full">
+						<label className="label">
+							<span className="label-text">访问令牌</span>
+						</label>
+						<div className="flex gap-2">
+							<input
+								type="password"
+								className="input input-bordered input-sm w-full"
+								placeholder={
+									options?.hasMessagePusherToken ? MESSAGE_PUSHER_TOKEN_PLACEHOLDER : ""
+								}
+								value={formState.messagePusherToken}
+								onChange={(e) => handleMessagePusherTokenChange(e.target.value)}
+								autoComplete="new-password"
+							/>
+							{options?.hasMessagePusherToken && !messagePusherTokenChanged && (
+								<button
+									type="button"
+									className="btn btn-outline btn-error btn-sm"
+									onClick={() => {
+										setFormState((prev) => ({ ...prev, messagePusherToken: "" }));
+										setMessagePusherTokenChanged(true);
+										setHasChanges(true);
+									}}
+									title="清除推送令牌"
+								>
+									✕
+								</button>
+							)}
+						</div>
+					</div>
+					<div className="form-control w-full">
+						<label className="label">
+							<span className="label-text">渠道（可选）</span>
+						</label>
+						<input
+							type="text"
+							className="input input-bordered input-sm w-full"
+							placeholder="telegram 或 webhook"
+							value={formState.messagePusherChannel}
+							onChange={(e) => handleInputChange("messagePusherChannel", e.target.value)}
+						/>
+					</div>
+				</div>
+			</MenuSectionDividerWrapper>
+
 			{/* Security */}
 			<MenuSectionDividerWrapper title={t("mail.security")} className="space-y-5">
 				<div className="flex items-center justify-between">
@@ -377,14 +508,19 @@ const Mail = () => {
 					type="button"
 					className="btn btn-sm"
 					disabled={
-						sendingTestMail || !formState.smtpHost || !formState.smtpEmail || hasChanges
+						sendingTestMail ||
+						hasChanges ||
+						(!formState.smtpHost &&
+							(!formState.messagePusherEnabled ||
+								!formState.messagePusherUrl ||
+								!formState.messagePusherUsername))
 					}
 					onClick={() => sendTestMail({ type: MailTemplateKey.Notification })}
 				>
 					{sendingTestMail ? (
 						<span className="loading loading-spinner loading-sm" />
 					) : (
-						t("mail.sendTestEmail")
+						"发送测试通知（SMTP / Message Pusher）"
 					)}
 				</button>
 				{hasChanges && (
