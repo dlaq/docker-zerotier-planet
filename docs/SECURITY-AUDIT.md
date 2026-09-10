@@ -47,6 +47,27 @@ SPDX SBOM 和多架构 manifest 合并，最终状态为 `Success`。五个正�
 清单摘要由 Docker Hub manifest 实际查询核对；这不替代目标 VPS 的防火墙、动态 DNS、
 证书、端口映射和运行时配置复核。
 
+## 2026-09-10 测试 VPS 实际验收
+
+该远端明确是测试环境，本次按要求先停止编排并删除其 `./data/`，未制作备份；因此旧
+Controller identity、旧网络和成员数据不再保留。随后使用 v1.1.4 Compose 全新初始化，
+再执行一次只换镜像的强制重建，未再次删除数据。
+
+- `docker compose up -d --force-recreate --wait` 成功：5 个常驻服务健康，3 个一次性
+  初始化服务退出码为 0。
+- 通过公网 HTTPS 管理入口访问 `/auth/login` 返回 200；使用管理员会话创建网络并查询
+  网络列表成功，数据库重建后网络记录仍保留。
+- ZeroTier Controller 内部认证请求返回 200；重启 ZeroTier 后 `authtoken.secret`
+  仍为 `root:1001/0640`，ZTNet 与 ZeroTier 均保持健康。
+- 实际监听仅为测试配置声明的 TCP/3443（管理端）、TCP/4443（relay）和 UDP/9993
+  （ZeroTier）；ZTNet/Controller/数据库端口未映射到宿主机。
+- Caddy 在 scratch 运行层无法把内部 CA 安装到宿主机信任库，会记录
+  `install is not supported on this system`；自签名 HTTPS 和健康检查正常，这不是启动
+  失败或权限泄漏。浏览器仍需手动信任该自签名 CA。
+
+上述是单台测试 VPS 的应用和容器验收，不等同于两台客户端在不同运营商/NAT 下的
+`DIRECT`、`RELAY`、`TUNNELED` 全量网络矩阵；该矩阵仍应在生产网络中执行。
+
 ## 历史发布审计
 
 审计日期：2026-09-05。范围：本次交付源码、五个 Linux/amd64 与 Linux/arm64 生产
