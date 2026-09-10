@@ -120,7 +120,15 @@ def main():
         model["services"].pop("relay", None)
         model["networks"].pop("relay-egress", None)
         for name, service in model["services"].items():
-            component = {"gateway-init": "postgres", "ztnet-init": "ztnet"}.get(name, name)
+            # The one-shot initializers reuse the same runtime image as the
+            # component they prepare.  Keep this mapping explicit so adding a
+            # new init service cannot make the smoke harness fail with a
+            # KeyError before Compose even starts.
+            component = {
+                "gateway-init": "postgres",
+                "ztnet-init": "ztnet",
+                "zerotier-init": "ztnet",
+            }.get(name, name)
             service["image"] = IMAGES[component]
             service["pull_policy"] = "never"
             for mount in service.get("volumes", []):
