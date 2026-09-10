@@ -262,7 +262,6 @@ export async function sendMessagePusher(
 			body: JSON.stringify({
 				title: message.title.slice(0, 512),
 				description: message.content.slice(0, 32_768),
-				content: message.content.slice(0, 32_768),
 				token,
 				...(channel ? { channel } : {}),
 			}),
