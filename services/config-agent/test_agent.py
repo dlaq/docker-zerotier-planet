@@ -157,7 +157,7 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(rendered["settings"]["tcpFallbackRelay"], "relay.example.com/9443")
             self.assertFalse(rendered["settings"]["forceTcpRelay"])
             local = json.loads((state / "generated/local.conf").read_text())
-            self.assertEqual(local["settings"]["allowManagementFrom"], ["127.0.0.1", "172.31.255.0/24"])
+            self.assertEqual(local["settings"]["allowManagementFrom"], ["127.0.0.1", "172.31.255.3/32"])
 
     def test_service_diff_is_bounded(self):
         old = default_config()

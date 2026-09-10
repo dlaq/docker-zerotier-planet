@@ -6,10 +6,24 @@ mkdir -p "$state_dir"
 chown 0:1001 "$state_dir"
 chmod 2770 "$state_dir"
 
+ensure_token_permissions() {
+    if [ -e "$state_dir/authtoken.secret" ]; then
+        # ZeroTier may recreate this file after a daemon restart. Keep it
+        # readable only by the controller process (UID 1001).
+        chown 0:1001 "$state_dir/authtoken.secret" 2>/dev/null || true
+        chmod 0640 "$state_dir/authtoken.secret" 2>/dev/null || true
+    fi
+}
+
 /usr/sbin/zerotier-one -p9993 &
 daemon_pid=$!
+permissions_pid=""
 
 shutdown() {
+    if [ -n "$permissions_pid" ]; then
+        kill -TERM "$permissions_pid" 2>/dev/null || true
+        wait "$permissions_pid" 2>/dev/null || true
+    fi
     kill -TERM "$daemon_pid" 2>/dev/null || true
     wait "$daemon_pid" 2>/dev/null || true
 }
@@ -30,8 +44,22 @@ while [ ! -s "$state_dir/authtoken.secret" ]; do
     sleep 1
 done
 
-chown 0:1001 "$state_dir/authtoken.secret"
-chmod 0640 "$state_dir/authtoken.secret"
+ensure_token_permissions
 find "$state_dir" -maxdepth 1 -type d -exec chmod 2770 {} \;
 
-wait "$daemon_pid"
+(
+    while kill -0 "$daemon_pid" 2>/dev/null; do
+        ensure_token_permissions
+        sleep 2
+    done
+) &
+permissions_pid=$!
+
+if wait "$daemon_pid"; then
+    daemon_status=0
+else
+    daemon_status=$?
+fi
+kill -TERM "$permissions_pid" 2>/dev/null || true
+wait "$permissions_pid" 2>/dev/null || true
+exit "$daemon_status"

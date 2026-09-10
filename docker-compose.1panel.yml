@@ -67,6 +67,89 @@ services:
     mem_limit: 512m
     cpus: 1.0
 
+  # 在 ZeroTier 首次启动前生成受控的 local.conf。该文件允许 ZTNet 容器
+  # (172.31.255.3) 访问 Controller API；不写入 token，也不覆盖其它设置。
+  zerotier-init:
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    pull_policy: always
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/node", "-e"]
+    environment:
+      ZT_ALLOW_MANAGEMENT_FROM: "${ZT_ALLOW_MANAGEMENT_FROM:-172.31.255.3/32}"
+    command:
+      - |
+        const fs = require("fs");
+        const path = require("path");
+        const net = require("net");
+        const controller = "/controller";
+        const target = path.join(controller, "local.conf");
+        const configured = String(process.env.ZT_ALLOW_MANAGEMENT_FROM || "");
+        const entries = configured.split(",").map((value) => value.trim()).filter(Boolean);
+        if (entries.length === 0 || entries.length > 64) {
+          throw new Error("ZT_ALLOW_MANAGEMENT_FROM must contain 1-64 IP/CIDR entries");
+        }
+        const seen = new Set();
+        for (const entry of entries) {
+          const separator = entry.lastIndexOf("/");
+          const address = separator < 0 ? entry : entry.slice(0, separator);
+          const prefix = separator < 0 ? null : entry.slice(separator + 1);
+          const version = net.isIP(address);
+          if (!version || (prefix !== null && (!/^\d+$/.test(prefix) || Number(prefix) > (version === 4 ? 32 : 128)))) {
+            throw new Error("invalid IP/CIDR in ZT_ALLOW_MANAGEMENT_FROM: " + entry);
+          }
+          if (seen.has(entry)) throw new Error("duplicate IP/CIDR in ZT_ALLOW_MANAGEMENT_FROM: " + entry);
+          seen.add(entry);
+        }
+        let current = {};
+        if (fs.existsSync(target)) {
+          const text = fs.readFileSync(target, "utf8");
+          try { current = JSON.parse(text); } catch (error) {
+            throw new Error("refusing to overwrite malformed " + target + ": " + error.message);
+          }
+          if (!current || typeof current !== "object" || Array.isArray(current)) {
+            throw new Error(target + " must contain a JSON object");
+          }
+        }
+        if (!current.settings || typeof current.settings !== "object" || Array.isArray(current.settings)) {
+          current.settings = {};
+        }
+        current.settings.allowManagementFrom = entries;
+        const next = JSON.stringify(current, null, 2) + "\n";
+        const previous = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
+        if (previous === next) {
+          fs.chmodSync(target, 0o640);
+          fs.chownSync(target, 0, 1001);
+          process.exit(0);
+        }
+        const temporary = path.join(controller, ".local.conf." + process.pid + ".tmp");
+        try {
+          const fd = fs.openSync(temporary, "wx", 0o640);
+          try { fs.writeFileSync(fd, next, "utf8"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+          fs.chmodSync(temporary, 0o640);
+          fs.chownSync(temporary, 0, 1001);
+          fs.renameSync(temporary, target);
+          fs.chmodSync(target, 0o640);
+          fs.chownSync(target, 0, 1001);
+        } finally {
+          try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+        }
+    volumes:
+      - ./data/zerotier:/controller
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+
   zerotier:
     image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
     pull_policy: always
@@ -88,6 +171,9 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+    depends_on:
+      zerotier-init:
+        condition: service_completed_successfully
     devices:
       - /dev/net/tun:/dev/net/tun
     security_opt:

@@ -547,7 +547,10 @@ class Agent:
         )
         local_settings: dict[str, Any] = {
             "primaryPort": 9993,
-            "allowManagementFrom": ["127.0.0.1", "172.31.255.0/24"],
+            # ZTNet has the fixed 172.31.255.3 address in the managed Compose
+            # network. Do not grant the entire Docker subnet access to the
+            # Controller API.
+            "allowManagementFrom": ["127.0.0.1", "172.31.255.3/32"],
             "allowSecondaryPort": zt["allowSecondaryPort"],
             "portMappingEnabled": zt["portMappingEnabled"],
             "allowTcpFallbackRelay": client["mode"] != "off",

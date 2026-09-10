@@ -58,6 +58,12 @@ for required in (
     'chown -R 1002:1002 /data /config',
     'chown 0:1002 /caddy /caddy/Caddyfile',
     'chmod 0640 /caddy/Caddyfile',
+    'ZT_ALLOW_MANAGEMENT_FROM: "${ZT_ALLOW_MANAGEMENT_FROM:-172.31.255.3/32}"',
+    'refusing to overwrite malformed',
+    'fs.renameSync(temporary, target)',
+    'fs.chownSync(target, 0, 1001)',
+    'zerotier-init:',
+    'condition: service_completed_successfully',
     './data/gateway-config/runtime:/config',
     './data/gateway-config/caddy:/caddy',
     './data/gateway-config/caddy:/etc/caddy:ro',
@@ -84,8 +90,8 @@ for required in (
 ):
     if required not in compose:
         raise SystemExit(f"ztnet-init missing controller permission guard: {required}")
-if compose.count('    pull_policy: always') != 7:
-    raise SystemExit("1Panel Compose must force a registry check for all seven services")
+if compose.count('    pull_policy: always') != 8:
+    raise SystemExit("1Panel Compose must force a registry check for all eight services")
 healthcheck = 'test: ["CMD", "node", "-e", "fetch(\'http://127.0.0.1:3000/favicon.ico\').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]'
 if healthcheck not in compose:
     raise SystemExit("ZTNet healthcheck must probe a static asset and accept HTTP 4xx responses")

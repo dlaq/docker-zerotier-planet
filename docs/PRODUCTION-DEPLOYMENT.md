@@ -88,9 +88,13 @@ chmod 600 .env
 `root:1001`、把 ZTNet 必需的 `authtoken.secret`、`identity.public` 和 `planet` 设为
 `root:1001/0640`。`gateway-init` 会生成 `./data/gateway-config/caddy/Caddyfile`，并把
 网关运行目录设为 UID/GID 1002；gateway 以只读 bind 挂载读取 Caddyfile。这样兼容不支持
-`configs.content` 的 1Panel 版本，也不会让运行中的网关写入 Caddyfile。两个初始化容器为
+`configs.content` 的 1Panel 版本，也不会让运行中的网关写入 Caddyfile。三个初始化容器为
 了修复旧版本留下的 0700 私有子目录，会临时使用 `CHOWN` 和 `DAC_OVERRIDE` capability；
-它们没有网络、没有 Docker Socket，完成后立即退出。
+它们没有网络、没有 Docker Socket，完成后立即退出。`zerotier-init` 会在 ZeroTier
+启动前原子生成 `local.conf`，默认只允许 ZTNet 的 `172.31.255.3/32` 访问 Controller
+API；可用 `.env` 中的 `ZT_ALLOW_MANAGEMENT_FROM` 以逗号分隔地追加受信地址。该初始化器
+拒绝覆盖格式错误的配置，完成后立即退出；运行中的 ZeroTier 令牌权限则由入口脚本持续
+保持为 `root:1001/0640`，避免重启后再次出现 ZTNet 无法读取令牌的问题。
 
 <!-- ZTPLANET-COMPOSE-BEGIN -->
 
@@ -164,6 +168,89 @@ services:
     mem_limit: 512m
     cpus: 1.0
 
+  # 在 ZeroTier 首次启动前生成受控的 local.conf。该文件允许 ZTNet 容器
+  # (172.31.255.3) 访问 Controller API；不写入 token，也不覆盖其它设置。
+  zerotier-init:
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    pull_policy: always
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/node", "-e"]
+    environment:
+      ZT_ALLOW_MANAGEMENT_FROM: "${ZT_ALLOW_MANAGEMENT_FROM:-172.31.255.3/32}"
+    command:
+      - |
+        const fs = require("fs");
+        const path = require("path");
+        const net = require("net");
+        const controller = "/controller";
+        const target = path.join(controller, "local.conf");
+        const configured = String(process.env.ZT_ALLOW_MANAGEMENT_FROM || "");
+        const entries = configured.split(",").map((value) => value.trim()).filter(Boolean);
+        if (entries.length === 0 || entries.length > 64) {
+          throw new Error("ZT_ALLOW_MANAGEMENT_FROM must contain 1-64 IP/CIDR entries");
+        }
+        const seen = new Set();
+        for (const entry of entries) {
+          const separator = entry.lastIndexOf("/");
+          const address = separator < 0 ? entry : entry.slice(0, separator);
+          const prefix = separator < 0 ? null : entry.slice(separator + 1);
+          const version = net.isIP(address);
+          if (!version || (prefix !== null && (!/^\d+$/.test(prefix) || Number(prefix) > (version === 4 ? 32 : 128)))) {
+            throw new Error("invalid IP/CIDR in ZT_ALLOW_MANAGEMENT_FROM: " + entry);
+          }
+          if (seen.has(entry)) throw new Error("duplicate IP/CIDR in ZT_ALLOW_MANAGEMENT_FROM: " + entry);
+          seen.add(entry);
+        }
+        let current = {};
+        if (fs.existsSync(target)) {
+          const text = fs.readFileSync(target, "utf8");
+          try { current = JSON.parse(text); } catch (error) {
+            throw new Error("refusing to overwrite malformed " + target + ": " + error.message);
+          }
+          if (!current || typeof current !== "object" || Array.isArray(current)) {
+            throw new Error(target + " must contain a JSON object");
+          }
+        }
+        if (!current.settings || typeof current.settings !== "object" || Array.isArray(current.settings)) {
+          current.settings = {};
+        }
+        current.settings.allowManagementFrom = entries;
+        const next = JSON.stringify(current, null, 2) + "\n";
+        const previous = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
+        if (previous === next) {
+          fs.chmodSync(target, 0o640);
+          fs.chownSync(target, 0, 1001);
+          process.exit(0);
+        }
+        const temporary = path.join(controller, ".local.conf." + process.pid + ".tmp");
+        try {
+          const fd = fs.openSync(temporary, "wx", 0o640);
+          try { fs.writeFileSync(fd, next, "utf8"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+          fs.chmodSync(temporary, 0o640);
+          fs.chownSync(temporary, 0, 1001);
+          fs.renameSync(temporary, target);
+          fs.chmodSync(target, 0o640);
+          fs.chownSync(target, 0, 1001);
+        } finally {
+          try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+        }
+    volumes:
+      - ./data/zerotier:/controller
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+
   zerotier:
     image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
     pull_policy: always
@@ -185,6 +272,9 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+    depends_on:
+      zerotier-init:
+        condition: service_completed_successfully
     devices:
       - /dev/net/tun:/dev/net/tun
     security_opt:
@@ -729,6 +819,7 @@ ss -lntup | grep 3443
 | `MANAGEMENT_BIND_ADDRESS` | `127.0.0.1` | 宿主机实际绑定地址 |
 | `MANAGEMENT_HOST` | `localhost` | HTTPS 证书名称和 ZTNet 标准访问地址；可留空或设为 `0.0.0.0` 以接受动态公网 Host |
 | `MANAGEMENT_PORT` | `3443` | 宿主机公开的管理端 TCP 端口 |
+| `ZT_ALLOW_MANAGEMENT_FROM` | `172.31.255.3/32` | Controller API 允许来源，逗号分隔；默认仅允许编排内 ZTNet |
 
 例如只允许通过 VPS 的内网地址 `192.168.10.20` 访问：
 
@@ -759,9 +850,15 @@ MANAGEMENT_PORT=3443
 可在 1Panel 环境变量中设置：
 
 ```env
+ZT_ALLOW_MANAGEMENT_FROM=172.31.255.3/32
 ZT_BIND_ADDRESS=0.0.0.0
 ZT_PUBLIC_PORT=9993
 ```
+
+`ZT_ALLOW_MANAGEMENT_FROM` 不是管理页面的公网访问白名单，而是 ZeroTier Controller 的
+内部 HTTP API 白名单。默认值只允许固定的 ZTNet 容器地址；只有在增加受控诊断客户端时
+才追加精确的 IP/CIDR，不能填写 `0.0.0.0/0`。Compose 首次启动前会原子更新
+`./data/zerotier/local.conf`，保留其中其它 Controller 设置。
 
 云安全组需要放行相同的 UDP 端口。修改外部端口或公网 IP 后，需要重新生成并向客户端
 分发 Planet/Moon；只改 Docker 端口不会自动更新已经安装在客户端上的 Planet 文件。
