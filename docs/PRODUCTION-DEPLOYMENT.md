@@ -1070,6 +1070,12 @@ sudo sh -c 'cd /var/backups/ztplanet-before-compose && sha256sum -c SHA256SUMS'
 全部 `./data/` 目录，同时从密码管理器复制原 `ZTPLANET_DB_PASSWORD` 和 `ZTPLANET_AUTH_SECRET`。新机
 必须使用完全相同的两个值恢复，不能在迁移时重新生成。
 
+测试机是 ARM64 而生产机架构未知时，不要把 `data/postgres` 原始目录当作通用迁移包直接
+覆盖生产数据库；即使同为 ARM，也必须先确认 PostgreSQL 大版本一致。跨架构或大版本迁移
+统一使用管理端“备份”生成的逻辑数据库备份（v1.1.7 镜像内置 `pg_dump`），在目标机先启动
+空 PostgreSQL，再用 `pg_restore`/管理端恢复。Controller 的 `data/zerotier`、Planet/Moon、
+网关证书和配置目录可以随 bind 目录打包，但仍要在停机后制作一致性归档。
+
 ### 从测试机切换到原生产 IP 且不替换客户端 Planet
 
 如果测试机是在导入旧 Controller 后运行的，不能把测试机正在使用的新版 `planet` 文件
