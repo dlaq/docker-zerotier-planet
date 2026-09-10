@@ -21,7 +21,7 @@ name: ztplanet
 
 services:
   postgres:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.4@sha256:1b4ed8ad5611a1bf84e6beb1fd50f5479b21e1f1c9111d0a0255635512579713
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -70,7 +70,7 @@ services:
   # 在 ZeroTier 首次启动前生成受控的 local.conf。该文件允许 ZTNet 容器
   # (172.31.255.3) 访问 Controller API；不写入 token，也不覆盖其它设置。
   zerotier-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.4@sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -151,7 +151,7 @@ services:
     cpus: 0.25
 
   zerotier:
-    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
+    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.4@sha256:f517d957cc2a780249a534796464edea665bc2ff0d53821ff636039830feb0f6
     pull_policy: always
     restart: unless-stopped
     volumes:
@@ -192,7 +192,7 @@ services:
       start_period: 20s
 
   ztnet-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.4@sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -239,7 +239,7 @@ services:
     cpus: 0.25
 
   ztnet:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.4@sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd
     pull_policy: always
     restart: unless-stopped
     user: "1001:1001"
@@ -301,7 +301,7 @@ services:
       start_period: 90s
 
   gateway-init:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.4@sha256:1b4ed8ad5611a1bf84e6beb1fd50f5479b21e1f1c9111d0a0255635512579713
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -402,7 +402,7 @@ services:
       - CHOWN
 
   gateway:
-    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.2@sha256:d36c4520bd9ae1227876e377e845272eadbb2d911d20717cf369bc3a601b6c7f
+    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.4@sha256:740db1d96959d0c971a51b58f5335b2bdc7447a19c3b782270fa1552df67851a
     pull_policy: always
     restart: unless-stopped
     user: "1002:1002"
@@ -443,7 +443,7 @@ services:
       start_period: 10s
 
   relay:
-    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.2@sha256:f9fb228500bea13809de15b8ebcb136b2bbf0d3e2d57a1ccf24d756e4df7a738
+    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.4@sha256:429c08859350292d40adf8eab689729a5d74a83eb45f9a0c7fad2c43e41950a5
     pull_policy: always
     profiles: ["relay"]
     restart: unless-stopped

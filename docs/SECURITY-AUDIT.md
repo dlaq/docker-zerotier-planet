@@ -27,6 +27,26 @@ Actions 运行
 该表证明的是发布清单和 CI 扫描结果，不替代目标 VPS 的防火墙、动态 DNS、证书、端口映射
 及运行时配置复核。
 
+## 2026-09-10 v1.1.4 发布复核
+
+v1.1.4 修复网关构建链中的 Go 依赖：Caddy 使用 Go 1.26.8，`x/crypto` 升至
+0.56.0，`grpc` 升至 1.83.2，并匹配 `x/net` 0.58.0。GitHub Actions 运行
+[`34445815787`](https://github.com/dlaq/docker-zerotier-planet/actions/runs/34445815787)
+完成源码门禁、原生 AMD64/ARM64 构建、集成烟测、Trivy Medium/High/Critical 扫描、
+SPDX SBOM 和多架构 manifest 合并，最终状态为 `Success`。五个正式标签均包含
+`linux/amd64` 与 `linux/arm64`，Compose 已固定到下列清单摘要。
+
+| 正式标签 | 多架构清单摘要 | 平台 |
+|---|---|---|
+| `zerotier-v1.1.4` | `sha256:f517d957cc2a780249a534796464edea665bc2ff0d53821ff636039830feb0f6` | amd64、arm64 |
+| `ztnet-v1.1.4` | `sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd` | amd64、arm64 |
+| `relay-v1.1.4` | `sha256:429c08859350292d40adf8eab689729a5d74a83eb45f9a0c7fad2c43e41950a5` | amd64、arm64 |
+| `postgres-v1.1.4` | `sha256:1b4ed8ad5611a1bf84e6beb1fd50f5479b21e1f1c9111d0a0255635512579713` | amd64、arm64 |
+| `gateway-v1.1.4` | `sha256:740db1d96959d0c971a51b58f5335b2bdc7447a19c3b782270fa1552df67851a` | amd64、arm64 |
+
+清单摘要由 Docker Hub manifest 实际查询核对；这不替代目标 VPS 的防火墙、动态 DNS、
+证书、端口映射和运行时配置复核。
+
 ## 历史发布审计
 
 审计日期：2026-09-05。范围：本次交付源码、五个 Linux/amd64 与 Linux/arm64 生产

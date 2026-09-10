@@ -122,7 +122,7 @@ name: ztplanet
 
 services:
   postgres:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.4@sha256:1b4ed8ad5611a1bf84e6beb1fd50f5479b21e1f1c9111d0a0255635512579713
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -171,7 +171,7 @@ services:
   # 在 ZeroTier 首次启动前生成受控的 local.conf。该文件允许 ZTNet 容器
   # (172.31.255.3) 访问 Controller API；不写入 token，也不覆盖其它设置。
   zerotier-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.4@sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -252,7 +252,7 @@ services:
     cpus: 0.25
 
   zerotier:
-    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.2@sha256:4c2f08a60b80c5d4e7d2511878fe221bbedf78af8b9901f5672d215a76779cce
+    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.4@sha256:f517d957cc2a780249a534796464edea665bc2ff0d53821ff636039830feb0f6
     pull_policy: always
     restart: unless-stopped
     volumes:
@@ -293,7 +293,7 @@ services:
       start_period: 20s
 
   ztnet-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.4@sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -340,7 +340,7 @@ services:
     cpus: 0.25
 
   ztnet:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.2@sha256:44ab7bd793d284f068faecd02fc88c6c0360a42f787f0c295936da02a8899b3a
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.4@sha256:d5751b850fd49d9b2e85db5aee95b807cae948b89c1537d416c1baf1fc4476fd
     pull_policy: always
     restart: unless-stopped
     user: "1001:1001"
@@ -402,7 +402,7 @@ services:
       start_period: 90s
 
   gateway-init:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.2@sha256:09949336f6f8f4957b5ff74f096a136b3980275cd351d04b7ce576335575b32e
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.4@sha256:1b4ed8ad5611a1bf84e6beb1fd50f5479b21e1f1c9111d0a0255635512579713
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -503,7 +503,7 @@ services:
       - CHOWN
 
   gateway:
-    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.2@sha256:d36c4520bd9ae1227876e377e845272eadbb2d911d20717cf369bc3a601b6c7f
+    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.4@sha256:740db1d96959d0c971a51b58f5335b2bdc7447a19c3b782270fa1552df67851a
     pull_policy: always
     restart: unless-stopped
     user: "1002:1002"
@@ -544,7 +544,7 @@ services:
       start_period: 10s
 
   relay:
-    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.2@sha256:f9fb228500bea13809de15b8ebcb136b2bbf0d3e2d57a1ccf24d756e4df7a738
+    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.4@sha256:429c08859350292d40adf8eab689729a5d74a83eb45f9a0c7fad2c43e41950a5
     pull_policy: always
     profiles: ["relay"]
     restart: unless-stopped
@@ -620,7 +620,7 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 
 1Panel 不会因为 GitHub 仓库更新而自动改写已经保存的 Compose；仅点击“启动”也可能继续
 复用本机旧镜像。先从本仓库当前 `master` 重新复制完整 Compose（或在 1Panel 编辑器中
-整段替换），确认 `image:` 行全部为 `*-v1.1.2@sha256:...`，不是 `v1.1.0`。
+整段替换），确认 `image:` 行全部为 `*-v1.1.4@sha256:...`，不是 `v1.1.0`。
 
 在 1Panel 主机终端执行下面命令，`compose_dir` 替换为 1Panel 详情中显示的实际目录。命令
 只删除容器和网络，不删除 `./data/`，也不要添加 `-v`：
@@ -1122,7 +1122,7 @@ sudo cat "$restore_dir/ztnet.pgdump" | sudo docker exec -i "$postgres_container"
 恢复前必须保证目标 `./data/` 目录可被替换，且不能同时运行新旧两个 Controller。升级时先
 完成上述停机备份，再复制新版本交付文档中的整个 Compose 代码块，保持原来的两个秘密值
 不变，然后在 1Panel 执行“拉取并重建”。不要使用 `latest`，不要自行删除镜像摘要，也不要
-只升级五个组件中的一部分。当前文档固定的是已通过双架构安全门禁的 `v1.1.2`；仅当收到
+只升级五个组件中的一部分。当前文档固定的是已通过双架构安全门禁的 `v1.1.4`；仅当收到
 新版完整文档并核对版本说明后才替换。
 
 验收至少包括：
