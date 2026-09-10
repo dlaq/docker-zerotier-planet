@@ -5,7 +5,7 @@ source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 install_dir=/opt/ztplanet
 state_dir=/etc/ztplanet
 data_dir=$install_dir/data
-release=${1:-v1.1.4}
+release=${1:-v1.1.6}
 repository=${2:-dlaq/zerotier-planet-test}
 
 if [ "$(id -u)" -ne 0 ]; then
