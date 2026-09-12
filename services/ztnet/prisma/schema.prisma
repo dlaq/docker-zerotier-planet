@@ -93,6 +93,15 @@ model network_members {
   nwid_ref           network                 @relation(fields: [nwid], references: [nwid], onDelete: Cascade)
   nwid               String
   lastSeen           DateTime?
+  lastOnlineAt       DateTime?
+  lastOfflineAt      DateTime?
+  statusObservedAt   DateTime?
+  observationControllerStartedAt DateTime?
+  sourceLastOnlineAt DateTime?
+  notifyOnFirstOnline Boolean @default(true)
+  connectionStatus   Int?
+  connectionPendingStatus Int?
+  connectionPendingSince DateTime?
   authorized         Boolean?                @default(false)
   physicalAddress    String?
   online             Boolean?                @default(false)
@@ -208,6 +217,7 @@ model Account {
 }
 
 model Session {
+  notificationRecordedAt DateTime?
   id        String   @id @default(cuid())
   token     String   @unique
   userId    String
@@ -514,3 +524,30 @@ model ActivityLog {
 
 // generate local draft
 // npx prisma migrate dev --create-only --preview-feature
+
+// Administrator operations notifications. Contents contain only an allowlisted
+// event DTO, rendered before delivery. Never store passwords or session tokens.
+model NotificationTemplate {
+ eventType String @id
+ title String
+ body String
+ enabled Boolean @default(true)
+ version Int @default(1)
+ updatedAt DateTime @updatedAt
+}
+model NotificationDelivery {
+ id String @id @default(cuid())
+ eventKey String @unique
+ eventType String
+ title String
+ body String
+ templateVersion Int
+ destinationFingerprint String
+ status String @default("pending")
+ attempts Int @default(0)
+ lastError String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ deliveredAt DateTime?
+ @@index([status, createdAt])
+}

@@ -24,7 +24,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 IMAGES = {
     "postgres": "ztplanet-postgres:17",
-    "zerotier": "ztplanet-zerotier:latest",
+    "zerotier": os.environ.get("SMOKE_ZEROTIER_IMAGE", "ztplanet-zerotier:latest"),
     "ztnet": os.environ.get("SMOKE_ZTNET_IMAGE", "ztplanet-ztnet:latest"),
     "gateway": "ztplanet-gateway:2.11.4",
 }
@@ -82,6 +82,11 @@ class Client:
             return body["result"]["data"]["json"]
         return body
 
+    def query(self, path, data):
+        status, body = self.request("/api/trpc/" + path + "?input=" + urllib.parse.quote(json.dumps({"json": data})))
+        assert status == 200, f"{path}: query HTTP {status}"
+        return body["result"]["data"]["json"]
+
     def login(self, email, password, expected=200):
         status, body = self.request("/api/auth/sign-in/email", {"email": email, "password": password})
         error_code = body.get("code", "") if isinstance(body, dict) else ""
@@ -90,6 +95,103 @@ class Client:
             assert self.cookies, "登录成功但没有会话 Cookie"
             assert not any(body["user"].get(key) for key in ("hash", "tempPassword", "twoFactorSecret"))
         return body
+
+
+def verify_notification_features(client, created, current_password, origin, command, env):
+    def internal(js):
+        return json.loads(run(*command, "exec", "-T", "ztnet", "node", "-e", js, env=env))
+
+    def mock(path):
+        return internal("fetch('http://pusher-mock:3000/" + path + "').then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))")
+
+    def await_delivery(predicate):
+        for _ in range(45):
+            rows = client.trpc("notifications.deliveries")
+            found = next((row for row in rows if predicate(row)), None)
+            if found:
+                return found
+            time.sleep(1)
+        raise AssertionError("通知未在预期时间内完成")
+
+    client.trpc("auth.setLocalZt", {"localControllerSecret": ""})
+    client.trpc("admin.setMail", {
+        "messagePusherEnabled": True, "messagePusherUrl": "http://pusher-mock:3000",
+        "messagePusherUsername": "smoke", "messagePusherToken": "smoke-token-" + secrets.token_hex(24),
+        "messagePusherChannel": "ops",
+    })
+    template = {"eventType": "node.added", "title": "新增 {{node.name}}", "body": "网络={{network.id}} 节点={{node.id}} 时间={{event.time}} 事件={{event.id}}", "enabled": True}
+    saved = client.trpc("notifications.saveTemplate", template)
+    assert saved["version"] == 1
+    assert "1234567890" in client.trpc("notifications.preview", template)["body"]
+    client.trpc("notifications.preview", {**template, "body": "{{user.password}}"}, expected=400)
+    client.trpc("admin.updateUser", {"id": created["id"], "params": {"isActive": True}})
+    regular = Client(origin)
+    regular.login(created["email"], current_password)
+    regular.trpc("notifications.templates", expected=403)
+    regular.trpc("notifications.deliveries", expected=403)
+    regular.trpc("notifications.saveTemplate", template, expected=403)
+    await_delivery(lambda d: d["eventType"] == "user.login.succeeded" and d["status"] == "sent")
+    regular.trpc("auth.update", {"password": current_password, "newPassword": "smoke-notification-password", "repeatNewPassword": "smoke-notification-password"})
+    password_event = await_delivery(lambda d: d["eventType"] == "user.password.changed" and d["status"] == "sent")
+    assert "smoke-notification-password" not in password_event["body"]
+    print("PASS 事件模板编辑/预览、模板变量限制、普通用户权限、登录及改密推送", flush=True)
+
+    network = client.trpc("network.createNetwork", {"central": False})
+    nwid = network["nwid"]
+    node = "1234567890"
+    client.trpc("networkMember.create", {"nwid": nwid, "id": node})
+    added = await_delivery(lambda d: d["eventType"] == "node.added" and node in d["body"] and d["status"] == "sent")
+    assert added["title"].startswith("新增") and nwid in added["body"]
+    snapshot = internal("const fs=require('node:fs'); const url='http://zerotier:9993/controller/network/" + nwid + "/member-status'; (async()=>{ const unauth=await fetch(url); const auth=await fetch(url,{headers:{'X-ZT1-Auth':fs.readFileSync('/run/zerotier-controller/authtoken.secret','utf8').trim()}}); console.log(JSON.stringify({unauth:unauth.status,status:auth.status,data:await auth.json()})); })()")
+    assert snapshot["unauth"] in (401, 403) and snapshot["status"] == 200
+    assert snapshot["data"]["members"][node]["observed"] is False
+    assert snapshot["data"]["members"][node]["lastSeen"] == 0
+    client.trpc("networkMember.Update", {"nwid": nwid, "memberId": node, "central": False, "updateParams": {"authorized": True}})
+    await_delivery(lambda d: d["eventType"] == "node.authorized" and d["status"] == "sent")
+    members = client.query("network.getNetworkMembers", {"nwid": nwid})
+    rows = members["members"]
+    row = next(m for m in rows if m["id"] == node)
+    assert row["lastOnlineAt"] is None and row["lastSeen"] is None
+    assert row["conStatus"] == 5
+    print("PASS Controller 成员状态接口鉴权、手动节点真实创建、授权推送及空历史时间", flush=True)
+    # A real ZeroTier configuration request, using this disposable controller's
+    # own client interface. No production identity or client is involved.
+    run(*command, "exec", "-T", "zerotier", "zerotier-cli", "join", nwid, env=env)
+    own_node = nwid[:10]
+    def observation():
+        return internal("const fs=require('node:fs'); fetch('http://zerotier:9993/controller/network/" + nwid + "/member-status',{headers:{'X-ZT1-Auth':fs.readFileSync('/run/zerotier-controller/authtoken.secret','utf8').trim()}}).then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))")
+    for _ in range(40):
+        own = observation()["members"].get(own_node)
+        if own and own["observed"] and own["online"]:
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError("真实 ZeroTier 配置请求未出现在观测接口")
+    assert 0 < own["lastOnline"] <= own["lastSeen"]
+    await_delivery(lambda d: d["eventType"] == "node.online" and own_node in d["body"] and d["status"] == "sent")
+    run(*command, "exec", "-T", "zerotier", "zerotier-cli", "leave", nwid, env=env)
+    print("验证真实节点离线窗口（约 120 秒）", flush=True)
+    for _ in range(50):
+        if not observation()["members"][own_node]["online"]:
+            break
+        time.sleep(3)
+    else:
+        raise AssertionError("节点离开后超过离线窗口仍显示在线")
+    await_delivery(lambda d: d["eventType"] == "node.offline" and own_node in d["body"] and d["status"] == "sent")
+    print("PASS 真实 ZeroTier 配置请求、首次上线、最近上线时间和离线窗口通知", flush=True)
+
+
+    mock("reject")
+    known = {d["id"] for d in client.trpc("notifications.deliveries")}
+    client.trpc("notifications.test", {})
+    failed = await_delivery(lambda d: d["id"] not in known and d["status"] == "unknown")
+    assert failed["attempts"] == 1
+    mock("accept")
+    client.trpc("notifications.retry", {"id": failed["id"], "acknowledgePossibleDuplicate": True})
+    retried = await_delivery(lambda d: d["id"] == failed["id"] and d["status"] == "sent")
+    assert retried["attempts"] == 2
+    assert all("smoke-notification-password" not in event["description"] for event in mock("events"))
+    print("PASS 网关 HTTP 200 失败识别、持久化结果及显式重试；无真实外部收件人", flush=True)
 
 
 def main():
@@ -136,6 +238,26 @@ def main():
                 relative = Path(mount["source"]).relative_to(ROOT / "data")
                 mount["source"] = str(directory / "data" / relative)
                 (directory / "data" / relative).mkdir(parents=True, exist_ok=True)
+        mock_js = """
+const http = require('node:http'); let mode = 'ok'; const events = [];
+http.createServer(async (req, res) => {
+ res.setHeader('content-type', 'application/json');
+ if (req.url === '/events') { res.end(JSON.stringify(events)); return; }
+ if (req.url === '/reject') { mode = 'reject'; res.end('{}'); return; }
+ if (req.url === '/accept') { mode = 'ok'; res.end('{}'); return; }
+ if (req.url === '/health') { res.end('{}'); return; }
+ let text = ''; for await (const part of req) { text += part; if (text.length > 100000) { req.destroy(); return; } }
+ const body = JSON.parse(text);
+ if (req.url !== '/push/smoke' || body.async !== false || body.channel !== 'ops' || !body.token?.startsWith('smoke-token-')) { res.statusCode = 400; res.end('{}'); return; }
+ events.push({title: body.title, description: body.description});
+ res.end(JSON.stringify({success: mode === 'ok', uuid: 'smoke'}));
+}).listen(3000, '0.0.0.0');
+"""
+        model["services"]["pusher-mock"] = {
+            "image": IMAGES["ztnet"], "pull_policy": "never", "user": "1001:1001",
+            "entrypoint": ["node", "-e", mock_js], "networks": {"app-network": {"ipv4_address": "172.31.255.10"}},
+            "read_only": True, "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"],
+        }
         model["services"]["zerotier"].pop("ports", None)
         model["services"]["gateway"]["ports"] = [
             {"target": 3443, "published": "0", "host_ip": "127.0.0.1", "protocol": "tcp"},
@@ -202,11 +324,23 @@ def main():
         client.trpc("admin.updateUser", {"id": created["id"], "params": {"isActive": False}})
         regular.trpc("auth.me", expected=401)
         print("PASS 改密双表同步、不截断空格、停用账户的旧 Cookie 失效", flush=True)
+        verify_notification_features(client, created, new_password, origin, command, env)
         # 不删除数据，完整重建容器；验证旧 UID 私有目录和 init 幂等性。
         run(*command, "up", "-d", "--force-recreate", "--wait", "--wait-timeout", "240", env=env, timeout=270)
         recreated_origin = "https://" + run(*command, "port", "gateway", "3443", env=env).strip()
         Client(recreated_origin, "198.51.100.14").login(first["email"], password)
         print("PASS 保留 bind 数据重新部署后仍可登录；全部 HTTP 集成检查通过", flush=True)
+        # Optional local browser QA; absent in CI. Only synthetic test credentials
+        # are written to this private, caller-selected temporary file.
+        if os.environ.get("SMOKE_BROWSER_STATE"):
+            state_file = Path(os.environ["SMOKE_BROWSER_STATE"])
+            state_file.write_text(json.dumps({"origin": recreated_origin, "email": first["email"], "password": password}))
+            state_file.chmod(0o600)
+            print("隔离测试通过，等待本地浏览器检查", flush=True)
+            deadline = time.monotonic() + 900
+            while time.monotonic() < deadline and not Path(str(state_file) + ".done").exists():
+                time.sleep(1)
+
     except Exception:
         if config_file.exists():
             print(run(*command, "logs", "--no-color", "--tail", "15", "gateway-init", "ztnet-init", env=env), flush=True)

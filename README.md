@@ -6,6 +6,8 @@ ZTNet 的网络管理能力，并新增隔离的宿主机配置代理、HTTPS �
 
 > 面向个人、非商业自建。部署前请确认 ZeroTier 和 ZTNet 当前许可证符合你的用途。
 
+节点状态、最近上线时间和可编辑事件推送说明见 [NODE-NOTIFICATIONS.md](docs/NODE-NOTIFICATIONS.md)。
+
 ## 固定组件
 
 - ZeroTier One `1.16.2`，commit `fc5c3ec22090b5b2a0f274e863651fe9ca489bf4`，以

@@ -1,13 +1,7 @@
 // Shared constants for the Network Members table.
 
 // ZeroTier peer connection status, as reported on `member.conStatus`.
-export enum ConnectionStatus {
-	Offline = 0,
-	Relayed = 1,
-	DirectLAN = 2,
-	DirectWAN = 3,
-	Controller = 4,
-}
+export { ConnectionStatus } from "~/utils/memberConnection";
 
 // localStorage keys for persisted table preferences.
 export const SORTING_STORAGE_KEY = "membersTableSorting";

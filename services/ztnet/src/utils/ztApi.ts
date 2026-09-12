@@ -715,6 +715,25 @@ export const member_details = async (
 	return await getData<MemberEntity>(addr, headers);
 };
 
+/** Authenticated, network-scoped observations. Older controllers return null. */
+export const member_status = async (
+	ctx: UserContext,
+	nwid: string,
+): Promise<import("~/types/memberObservation").MemberStatusSnapshot | null> => {
+	const { localControllerUrl, headers } = await getOptions(ctx, false);
+	try {
+		const { data } = await axios.get(
+			`${localControllerUrl}/controller/network/${nwid}/member-status`,
+			{ headers, timeout: 10000 },
+		);
+		const { parseMemberStatus } = await import("~/server/api/utils/memberObservation");
+		return parseMemberStatus(data);
+	} catch (error) {
+		if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+		throw new Error("Controller member status unavailable");
+	}
+};
+
 // Get all peers
 // https://docs.zerotier.com/service/v1/#operation/getPeers
 export const peers = async (ctx: UserContext): Promise<ZTControllerGetPeer[]> => {
@@ -728,11 +747,11 @@ export const peers = async (ctx: UserContext): Promise<ZTControllerGetPeer[]> =>
 	try {
 		const response: AxiosResponse = await axios.get(addr, {
 			headers,
+			timeout: 10000,
 		});
 		return response.data as ZTControllerGetPeer[];
 	} catch (error) {
-		const message = `${error} (peers)`;
-		throw new APIError(message, error as AxiosError);
+		throw new Error("Controller peers unavailable");
 	}
 };
 

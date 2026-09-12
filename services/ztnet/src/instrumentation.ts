@@ -5,7 +5,10 @@ export async function register() {
 			cronTasksModule.CheckExpiredUsers();
 		}
 
-		// update lastseen for all members
+		const { startNotificationWorker } = await import("./server/notifications/service");
+		startNotificationWorker();
+
+		// Observe all managed members
 		if (cronTasksModule.updatePeers) {
 			cronTasksModule.updatePeers();
 		}

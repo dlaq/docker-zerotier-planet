@@ -28,7 +28,9 @@ const hashMembers = (members: MemberEntity[]): string =>
 			(m) =>
 				`${m.id}:${m.authorized ? 1 : 0}:${m.conStatus ?? ""}:${(
 					m.ipAssignments ?? []
-				).join(",")}:${m.name ?? ""}`,
+				).join(
+					",",
+				)}:${m.name ?? ""}:${m.lastSeen ?? ""}:${m.lastOnlineAt ?? ""}:${m.lastOfflineAt ?? ""}`,
 		)
 		.sort()
 		.join("|");

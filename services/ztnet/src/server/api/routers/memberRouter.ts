@@ -1,3 +1,4 @@
+import { memberConfigSummary, recordMemberAction } from "~/server/notifications/service";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import * as ztController from "~/utils/ztApi";
@@ -107,6 +108,14 @@ export const networkMemberRouter = createTRPCRouter({
 					},
 				});
 			}
+			const controllerMember = await ztController.member_update({
+				ctx,
+				nwid: input.nwid,
+				memberId: input.id,
+				central: false,
+				updateParams: { hidden: false },
+			});
+
 			// check if user exist in db, and if so set deleted:false and permanentlyDeleted:false
 			const member = await ctx.prisma.network_members.findUnique({
 				where: {
@@ -192,18 +201,31 @@ export const networkMemberRouter = createTRPCRouter({
 					}
 				}
 
-				const updatedMember = await ctx.prisma.network_members.update({
-					where: {
-						id_nwid: {
-							id: input.id,
-							nwid: input.nwid,
+				const updatedMember = await ctx.prisma.$transaction(async (tx) => {
+					const restored = await tx.network_members.update({
+						where: {
+							id_nwid: {
+								id: input.id,
+								nwid: input.nwid,
+							},
 						},
-					},
-					data: {
-						deleted: false,
-						permanentlyDeleted: false,
-						name: memberName,
-					},
+						data: {
+							deleted: false,
+							permanentlyDeleted: false,
+							name: memberName,
+						},
+					});
+					if (member.deleted || member.permanentlyDeleted)
+						await recordMemberAction(
+							tx,
+							"node.added",
+							{ ...controllerMember, ...restored } as unknown as MemberEntity,
+							`node.restore:${input.nwid}:${input.id}:${controllerMember.revision}`,
+							ctx.session.user.name || ctx.session.user.id,
+							"已隐藏",
+							"已恢复",
+						);
+					return restored;
 				});
 
 				// Send organization admin notification for manually adding existing member
@@ -236,19 +258,6 @@ export const networkMemberRouter = createTRPCRouter({
 				}
 
 				return updatedMember;
-			}
-
-			try {
-				// Send webhook
-				await sendWebhook<MemberJoined>({
-					hookType: HookType.NETWORK_JOIN,
-					organizationId: input?.organizationId,
-					memberId: input.id,
-					networkId: input.nwid,
-				});
-			} catch (error) {
-				// add error messge that webhook failed
-				throwError(error.message);
 			}
 
 			// if not, create new member
@@ -321,18 +330,43 @@ export const networkMemberRouter = createTRPCRouter({
 				memberName = input.id;
 			}
 
-			await ctx.prisma.network_members.create({
-				data: {
-					id: input.id,
-					address: input.id,
-					name: memberName,
-					lastSeen: new Date(),
-					creationTime: new Date(),
-					nwid_ref: {
-						connect: { nwid: input.nwid },
+			await ctx.prisma.$transaction(async (tx) => {
+				const created = await tx.network_members.create({
+					data: {
+						id: input.id,
+						address: input.id,
+						name: memberName,
+						authorized: !!controllerMember.authorized,
+						ipAssignments: controllerMember.ipAssignments || [],
+						creationTime: new Date(),
+						nwid_ref: {
+							connect: { nwid: input.nwid },
+						},
 					},
-				},
+				});
+				await recordMemberAction(
+					tx,
+					"node.added",
+					{ ...controllerMember, ...created } as unknown as MemberEntity,
+					`node.added:${input.nwid}:${input.id}:${created.nodeid}`,
+					ctx.session.user.name || ctx.session.user.id,
+					"未加入",
+					"管理员预创建，等待节点通信",
+				);
 			});
+
+			try {
+				// Send webhook
+				await sendWebhook<MemberJoined>({
+					hookType: HookType.NETWORK_JOIN,
+					organizationId: input?.organizationId,
+					memberId: input.id,
+					networkId: input.nwid,
+				});
+			} catch (error) {
+				// The state change has already committed. Do not report a failed mutation.
+				console.error("Member webhook delivery failed");
+			}
 
 			// Send organization admin notification for manually adding new member
 			if (input.organizationId) {
@@ -581,14 +615,37 @@ export const networkMemberRouter = createTRPCRouter({
 
 					// Update database if there are fields to update
 					if (Object.keys(databaseUpdateData).length > 0) {
-						await ctx.prisma.network_members.update({
-							where: {
-								id_nwid: {
-									id: memberId,
-									nwid: nwid,
+						await ctx.prisma.$transaction(async (tx) => {
+							const stored = await tx.network_members.update({
+								where: {
+									id_nwid: {
+										id: memberId,
+										nwid: nwid,
+									},
 								},
-							},
-							data: databaseUpdateData,
+								data: databaseUpdateData,
+							});
+							const type =
+								!!dbMember.authorized !== !!stored.authorized
+									? stored.authorized
+										? "node.authorized"
+										: "node.deauthorized"
+									: Object.keys(databaseUpdateData).some(
+												(key) =>
+													JSON.stringify(dbMember[key]) !== JSON.stringify(stored[key]),
+											)
+										? "node.config.changed"
+										: null;
+							if (type)
+								await recordMemberAction(
+									tx,
+									type,
+									{ ...updatedMember, ...stored } as unknown as MemberEntity,
+									`${type}:${nwid}:${memberId}:${updatedMember.revision}`,
+									ctx.session.user.name || ctx.session.user.id,
+									memberConfigSummary(dbMember),
+									memberConfigSummary(stored),
+								);
 						});
 					}
 				}
@@ -606,8 +663,8 @@ export const networkMemberRouter = createTRPCRouter({
 					changes: payload,
 				});
 			} catch (error) {
-				// add error messge that webhook failed
-				throwError(error.message);
+				// The state change has already committed. Do not report a failed mutation.
+				console.error("Member webhook delivery failed");
 			}
 
 			// Send organization admin notification for node (member) authorization changes
@@ -720,8 +777,8 @@ export const networkMemberRouter = createTRPCRouter({
 					changes: payload,
 				});
 			} catch (error) {
-				// add error messge that webhook failed
-				throwError(error.message);
+				// The state change has already committed. Do not report a failed mutation.
+				console.error("Member webhook delivery failed");
 			}
 			return updatedMember;
 		}),
@@ -793,8 +850,8 @@ export const networkMemberRouter = createTRPCRouter({
 					changes: input.updateParams,
 				});
 			} catch (error) {
-				// add error messge that webhook failed
-				throwError(error.message);
+				// The state change has already committed. Do not report a failed mutation.
+				console.error("Member webhook delivery failed");
 			}
 			return { member: response.networkMembers[0] };
 		}),
@@ -870,8 +927,8 @@ export const networkMemberRouter = createTRPCRouter({
 					changes: { stashed: true },
 				});
 			} catch (error) {
-				// add error messge that webhook failed
-				throwError(error.message);
+				// The state change has already committed. Do not report a failed mutation.
+				console.error("Member webhook delivery failed");
 			}
 
 			return response;
@@ -974,13 +1031,25 @@ export const networkMemberRouter = createTRPCRouter({
 			}
 
 			// Regular member deletion - remove from database completely
-			await ctx.prisma.network_members.delete({
-				where: {
-					id_nwid: {
-						id: input.id,
-						nwid: input.nwid,
+			await ctx.prisma.$transaction(async (tx) => {
+				if (existingMember)
+					await recordMemberAction(
+						tx,
+						"node.removed",
+						existingMember as unknown as MemberEntity,
+						`node.removed:${input.nwid}:${input.id}:${existingMember.nodeid}`,
+						ctx.session.user.name || ctx.session.user.id,
+						"网络成员",
+						"管理员移除",
+					);
+				await tx.network_members.delete({
+					where: {
+						id_nwid: {
+							id: input.id,
+							nwid: input.nwid,
+						},
 					},
-				},
+				});
 			});
 
 			// Send organization admin notification for permanent deletion
@@ -1023,8 +1092,8 @@ export const networkMemberRouter = createTRPCRouter({
 					networkId: input.nwid,
 				});
 			} catch (error) {
-				// add error messge that webhook failed
-				throwError(error.message);
+				// The state change has already committed. Do not report a failed mutation.
+				console.error("Member webhook delivery failed");
 			}
 		}),
 	getMemberAnotations: protectedProcedure

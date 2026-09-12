@@ -6,6 +6,7 @@ jest.mock("~/utils/ztApi", () => ({
 	network_members: jest.fn(),
 	member_details: jest.fn(),
 	peers: jest.fn(),
+	member_status: jest.fn(),
 }));
 
 import * as ztController from "~/utils/ztApi";
@@ -43,6 +44,10 @@ const dbRow = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+	prisma.$transaction = jest.fn().mockImplementation((work) => work(prisma)) as never;
+	prisma.globalOptions.findFirst = jest.fn().mockResolvedValue(null);
+	prisma.network.findUnique = jest.fn().mockResolvedValue({ name: "test" });
+	ztMock.member_status.mockResolvedValue(null);
 	dbMock.findMany = jest.fn();
 	dbMock.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 	dbMock.deleteMany = jest.fn().mockResolvedValue({ count: 1 });
@@ -116,6 +121,14 @@ describe("reconcileNetworkMembers — revision-delta sync", () => {
 				dbRow("A", { online: false }),
 				dbRow("B", { online: false }),
 			]);
+		ztMock.member_status.mockResolvedValue({
+			clock: 1000000,
+			controllerStartedAt: 900000,
+			onlineWindowMs: 120000,
+			members: {
+				A: { observed: true, online: true, lastSeen: 999999, lastOnline: 990000 },
+			},
+		});
 		// A has a live peer (becomes online); B has none (stays offline).
 		ztMock.peers.mockResolvedValue([
 			{
@@ -265,12 +278,21 @@ describe("reconcileNetworkMembers — revision-delta sync", () => {
 			},
 		]);
 
+		ztMock.member_status.mockResolvedValue({
+			clock: 1000000,
+			controllerStartedAt: 900000,
+			onlineWindowMs: 120000,
+			members: {
+				A: { observed: true, online: true, lastSeen: 999999, lastOnline: 990000 },
+			},
+		});
 		const result = await reconcileNetworkMembers(ctx, nwid);
 
 		expect(ztMock.member_details).not.toHaveBeenCalled();
 		const statusWrite = dbMock.updateMany.mock.calls[0][0];
 		expect(statusWrite.where).toEqual({ nwid, id: "A" });
-		expect(statusWrite.data).toMatchObject({ vMajor: 1, vMinor: 14, vRev: 2 });
+		expect(statusWrite.data).toMatchObject({ vMinor: 14, vRev: 2 });
+		expect(statusWrite.data.vMajor).toBeUndefined(); // unchanged columns are skipped
 		// The peer object carries no protocol version — the cached vProto stays.
 		expect(statusWrite.data.vProto).toBeUndefined();
 		expect(result[0]).toMatchObject({ vMajor: 1, vMinor: 14, vRev: 2 });

@@ -15,6 +15,7 @@ import { EditableDescriptionCell } from "./cells/EditableDescriptionCell";
 import { IpAssignmentsCell } from "./cells/IpAssignmentsCell";
 import { PhysicalAddressCell } from "./cells/PhysicalAddressCell";
 import { ConnectionStatusCell } from "./cells/ConnectionStatusCell";
+import { MemberTimeCell } from "./cells/MemberTimeCell";
 import { ActionsCell } from "./cells/ActionsCell";
 
 interface IProp {
@@ -194,6 +195,18 @@ export const useMemberColumns = ({
 					<ConnectionStatusCell original={original} central={central} />
 				),
 			}),
+			...(["lastOnlineAt", "lastSeen"] as const).map((field) =>
+				columnHelper.accessor(field, {
+					id: field,
+					header: () => <span>{c(`header.${field}`)}</span>,
+					minSize: 150,
+					maxSize: 200,
+					enableSorting: !central,
+					cell: ({ row: { original } }) => (
+						<MemberTimeCell original={original} field={field} />
+					),
+				}),
+			),
 			columnHelper.accessor("action", {
 				header: () => <span>{c("header.actions")}</span>,
 				id: "action",

@@ -18,7 +18,7 @@ services:
     build:
       context: services/ztnet
       args:
-        NEXT_PUBLIC_APP_VERSION: ztplanet-1.1.0-ztnet-19206f20
+        NEXT_PUBLIC_APP_VERSION: ztplanet-1.1.8
 
   gateway:
     image: ztplanet-gateway:2.11.4

@@ -18,6 +18,9 @@ RUN git init . \
     && git checkout --detach FETCH_HEAD \
     && test "$(sed -n 's/^#define ZEROTIER_ONE_VERSION_MAJOR \([0-9]*\)$/\1/p' version.h).$(sed -n 's/^#define ZEROTIER_ONE_VERSION_MINOR \([0-9]*\)$/\1/p' version.h).$(sed -n 's/^#define ZEROTIER_ONE_VERSION_REVISION \([0-9]*\)$/\1/p' version.h)" = "${ZEROTIER_VERSION}"
 
+COPY services/zerotier/member-status.patch /build/member-status.patch
+RUN git apply --check /build/member-status.patch && git apply /build/member-status.patch
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/build/ZeroTierOne/rustybits/target \

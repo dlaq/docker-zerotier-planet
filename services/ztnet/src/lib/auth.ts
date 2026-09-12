@@ -1,11 +1,8 @@
+import { recordLoginSession } from "~/server/notifications/service";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { genericOAuth } from "better-auth/plugins";
-import {
-	createAuthMiddleware,
-	formCsrfMiddleware,
-	APIError,
-} from "better-auth/api";
+import { createAuthMiddleware, formCsrfMiddleware, APIError } from "better-auth/api";
 import { compare, hash } from "bcryptjs";
 import { authenticator } from "otplib";
 import { prisma } from "~/server/db";
@@ -14,11 +11,7 @@ import {
 	generateInstanceSecret,
 	TOTP_MFA_TOKEN_SECRET,
 } from "~/utils/encryption";
-import {
-	parseUA,
-	DEVICE_SALT_COOKIE_NAME,
-	secureCookiesEnabled,
-} from "~/utils/devices";
+import { parseUA, DEVICE_SALT_COOKIE_NAME, secureCookiesEnabled } from "~/utils/devices";
 import { normalizeEmail } from "~/utils/email";
 import { sendMailWithTemplate } from "~/utils/mail";
 import { MailTemplateKey } from "~/utils/enums";
@@ -28,22 +21,16 @@ import { managementTrustedOrigins } from "./managementOrigin";
 
 const MAX_FAILED_ATTEMPTS = Math.min(
 	20,
-	Math.max(
-		1,
-		Number.parseInt(process.env.ZTPLANET_LOGIN_ATTEMPTS || "5", 10) || 5,
-	),
+	Math.max(1, Number.parseInt(process.env.ZTPLANET_LOGIN_ATTEMPTS || "5", 10) || 5),
 );
 const COOLDOWN_PERIOD =
 	Math.min(
 		86400,
 		Math.max(
 			60,
-			Number.parseInt(
-				process.env.ZTPLANET_LOGIN_LOCKOUT_SECONDS || "900",
-				10,
-			) || 900,
-			),
-		) * 1000;
+			Number.parseInt(process.env.ZTPLANET_LOGIN_LOCKOUT_SECONDS || "900", 10) || 900,
+		),
+	) * 1000;
 
 function boundedPositiveInt(
 	raw: string | undefined,
@@ -145,9 +132,7 @@ export function mapOAuthProfileToUser(profile: Record<string, unknown>): {
 	// credential sign-in (which lowercases before lookup) would never find. A
 	// whitespace-only value becomes "", treated as no email at all.
 	const normalized =
-		typeof profile.email === "string"
-			? normalizeEmail(profile.email)
-			: undefined;
+		typeof profile.email === "string" ? normalizeEmail(profile.email) : undefined;
 	const email = normalized || undefined;
 	const pickStr = (key: string): string | undefined =>
 		typeof profile[key] === "string" ? (profile[key] as string) : undefined;
@@ -257,12 +242,8 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 	if (!user) return; // let better-auth handle "user not found"
 
 	// 1. Cooldown check (custom, not provided by better-auth)
-	if (
-		user.lastFailedLoginAttempt &&
-		user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS
-	) {
-		const timeSinceLastFailed =
-			Date.now() - user.lastFailedLoginAttempt.getTime();
+	if (user.lastFailedLoginAttempt && user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
+		const timeSinceLastFailed = Date.now() - user.lastFailedLoginAttempt.getTime();
 		if (timeSinceLastFailed < COOLDOWN_PERIOD) {
 			throw new APIError("TOO_MANY_REQUESTS", {
 				message: "Too many failed attempts. Please try again later.",
@@ -343,9 +324,7 @@ export async function runBeforeAuthHook(ctx: any): Promise<void> {
 		}
 
 		if (!process.env.NEXTAUTH_SECRET) {
-			console.error(
-				"Missing encryption key; cannot proceed with two factor login.",
-			);
+			console.error("Missing encryption key; cannot proceed with two factor login.");
 			throw new APIError("INTERNAL_SERVER_ERROR", {
 				message: "Internal server error",
 			});
@@ -439,8 +418,7 @@ export async function onSessionCreated(
 
 	// Device tracking
 	const headers: Headers | null = ctx?.headers ?? null;
-	const userAgent =
-		headers?.get("x-user-agent") || headers?.get("user-agent") || "";
+	const userAgent = headers?.get("x-user-agent") || headers?.get("user-agent") || "";
 	if (!userAgent) return;
 
 	const cookieHeader = headers?.get("cookie") || "";
@@ -697,8 +675,7 @@ export const auth = betterAuth({
 			8 * 60 * 60,
 			Math.max(
 				900,
-				Number.parseInt(process.env.NEXTAUTH_SESSION_MAX_AGE, 10) ||
-					8 * 60 * 60,
+				Number.parseInt(process.env.NEXTAUTH_SESSION_MAX_AGE, 10) || 8 * 60 * 60,
 			),
 		),
 		cookieCache: {
@@ -794,9 +771,7 @@ export const auth = betterAuth({
 			// Email-based account linking is intentionally opt-in. An IdP that
 			// returns an unverified/attacker-controlled address must not be able to
 			// attach an OAuth identity to an existing local account by default.
-			enabled:
-				process.env.OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING?.toLowerCase() ===
-				"true",
+			enabled: process.env.OAUTH_ALLOW_DANGEROUS_EMAIL_LINKING?.toLowerCase() === "true",
 			trustedProviders: [OAUTH_PROVIDER_ID],
 		},
 	},
@@ -821,6 +796,13 @@ export const auth = betterAuth({
 					// Throws abort the session creation so the user is never logged in
 					// when their account is disabled or expired.
 					await onSessionCreated(session.userId as string, ctx);
+				},
+				after: async (session) => {
+					try {
+						await recordLoginSession(session.id);
+					} catch (_error) {
+						console.error("Login notification could not be recorded");
+					}
 				},
 			},
 		},

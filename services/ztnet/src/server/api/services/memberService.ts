@@ -1,11 +1,21 @@
+import {
+	enqueueNotification,
+	memberConfigSummary,
+	nodeEventContext,
+	persistObservedMember,
+} from "~/server/notifications/service";
 import { UserContext } from "~/types/ctx";
 import { MemberEntity, Peers } from "~/types/local/member";
-import { determineConnectionStatus } from "../utils/memberUtils";
+import { activePreferredPath } from "~/utils/memberConnection";
+import {
+	readLiveObservation,
+	observeMember,
+	type LiveObservation,
+} from "../utils/memberObservation";
 import * as ztController from "~/utils/ztApi";
 import { prisma } from "~/server/db";
 import { sendWebhook } from "~/utils/webhook";
 import { HookType, MemberJoined } from "~/types/webhooks";
-import { throwError } from "~/server/helpers/errorHandler";
 import { network_members, Prisma } from "@prisma/client";
 
 /**
@@ -35,7 +45,8 @@ export const syncMemberPeersAndStatus = async (
 	const dbMembersMap = new Map(dbMembersArray.map((m) => [m.id, m]));
 
 	// get peers
-	const controllerPeers = await ztController.peers(ctx);
+	const live = await readLiveObservation(ctx, nwid);
+	const controllerPeers = [...live.peers.values()];
 
 	//!TODO Promise.all causing race condition. Need to refactor to use for loop
 	const updatedMembers = await Promise.all(
@@ -51,7 +62,7 @@ export const syncMemberPeersAndStatus = async (
 			const dbMember = dbMembersMap.get(ztMember.id) || null;
 
 			// Find the active preferred path in the peers object
-			const activePreferredPath = findActivePreferredPeerPath(peers);
+			const preferredPath = activePreferredPath(peers);
 			const { physicalAddress, ...restOfDbMembers } = dbMember || {};
 
 			// Capture DB name before merge so we can restore it if controller data overwrites with empty value
@@ -62,7 +73,7 @@ export const syncMemberPeersAndStatus = async (
 			const updatedMember = {
 				...restOfDbMembers,
 				...ztMember,
-				physicalAddress: activePreferredPath?.address ?? physicalAddress,
+				physicalAddress: preferredPath?.address ?? physicalAddress,
 				peers: peers || {},
 			} as MemberEntity;
 
@@ -78,25 +89,14 @@ export const syncMemberPeersAndStatus = async (
 				updatedMember.name = dbName;
 			}
 
-			// Update the connection status
-			updatedMember.conStatus = determineConnectionStatus(updatedMember);
-
-			// Check if the member is connected and has peers
-			const memberIsOnline =
-				Object.keys(updatedMember.peers).length > 0 && updatedMember.conStatus !== 0;
-
-			// Create the object with the data to be updated
+			const observed = dbMember ? observeMember(dbMember, updatedMember, live) : {};
+			const memberIsOnline = updatedMember.online === true;
 			const updateData: Partial<network_members> = {
 				id: updatedMember.id,
 				address: updatedMember.address,
 				authorized: updatedMember.authorized,
-				online: memberIsOnline,
+				...observed,
 			};
-
-			// add lastSeen to updateData if the member is connected
-			if (memberIsOnline) {
-				updateData.lastSeen = new Date();
-			}
 
 			// update physicalAddress if the member is connected
 			if (memberIsOnline && updatedMember?.physicalAddress) {
@@ -131,22 +131,6 @@ export const syncMemberPeersAndStatus = async (
 	// console.log(updatedMembers);
 	// console.log(updatedMembers[0].peers?.paths);
 	return updatedMembers.filter(Boolean); // Filter out any null values
-};
-
-/**
- * Determines the active preferred path from the given peers.
- *
- * @param peers - The peers object containing paths.
- * @returns The active preferred path, or undefined if not found.
- */
-const findActivePreferredPeerPath = (peers: Peers | null) => {
-	if (!peers || typeof peers !== "object" || !Array.isArray(peers.paths)) {
-		return null;
-	}
-	const { paths } = peers;
-	const res = paths.find((path) => path?.active && path?.preferred);
-
-	return { ...res };
 };
 
 const findExistingMemberName = async (
@@ -275,49 +259,10 @@ const addNetworkMember = async (ctx, member: MemberEntity) => {
 				memberOfOrganization.organizationId,
 			);
 		}
-		try {
-			// Send webhook
-			await sendWebhook<MemberJoined>({
-				hookType: HookType.NETWORK_JOIN,
-				organizationId: memberOfOrganization.organizationId,
-				memberId: member.id,
-				networkId: member.nwid,
-			});
-		} catch (error) {
-			// add error messge that webhook failed
-			throwError(error.message);
-		}
-
-		// Send organization admin notification for new node joining
-		try {
-			const { sendOrganizationAdminNotification } = await import(
-				"~/utils/organizationNotifications"
-			);
-
-			// Get network info for notification
-			const network = await prisma.network.findUnique({
-				where: { nwid: member.nwid },
-				select: { name: true },
-			});
-
-			await sendOrganizationAdminNotification({
-				organizationId: memberOfOrganization.organizationId,
-				eventType: "NODE_ADDED",
-				eventData: {
-					networkId: member.nwid,
-					networkName: network?.name || member.nwid,
-					nodeId: member.id,
-					nodeName: name || member.id,
-				},
-			});
-		} catch (error) {
-			// Don't fail the operation if notification fails
-			console.error("Failed to send node added notification:", error);
-		}
 	}
 
 	// Member is not joining an organization network
-	if (!memberOfOrganization.organizationId) {
+	if (!memberOfOrganization?.organizationId) {
 		// check if addMemberIdAsName is enabled, and if so use the member id as the name
 		if (user.options?.addMemberIdAsName) {
 			name = member.id;
@@ -330,29 +275,70 @@ const addNetworkMember = async (ctx, member: MemberEntity) => {
 		}
 	}
 
-	try {
-		return await prisma.network_members.upsert({
-			where: {
-				id_nwid: {
-					id: member.id,
-					nwid: member.nwid,
-				},
-			},
+	const saved = await prisma.$transaction(async (tx) => {
+		const existing = await tx.network_members.findUnique({
+			where: { id_nwid: { id: member.id, nwid: member.nwid } },
+		});
+		const row = await tx.network_members.upsert({
+			where: { id_nwid: { id: member.id, nwid: member.nwid } },
 			create: {
 				id: member.id,
-				lastSeen: new Date(),
 				creationTime: new Date(),
 				name,
 				nwid_ref: { connect: { nwid: member.nwid } },
 				deleted: false,
 			},
-			update: {
-				lastSeen: new Date(),
-			},
+			update: {},
 		});
-	} catch (error) {
-		console.error("Error upserting network member:", error);
+		if (!existing) {
+			const network = await tx.network.findUnique({
+				where: { nwid: member.nwid },
+				select: { name: true },
+			});
+			await enqueueNotification(
+				"node.added",
+				`node.added:${member.nwid}:${member.id}:${row.nodeid}`,
+				nodeEventContext(
+					{ ...member, name: name || member.name },
+					network?.name,
+					"未加入",
+					"已加入成员列表",
+				),
+				tx,
+			);
+		}
+		return { row, created: !existing };
+	});
+	if (saved.created && memberOfOrganization?.organizationId) {
+		try {
+			await sendWebhook<MemberJoined>({
+				hookType: HookType.NETWORK_JOIN,
+				organizationId: memberOfOrganization.organizationId,
+				memberId: member.id,
+				networkId: member.nwid,
+			});
+		} catch (_error) {
+			console.error("Member join webhook delivery failed");
+		}
+		try {
+			const { sendOrganizationAdminNotification } = await import(
+				"~/utils/organizationNotifications"
+			);
+			await sendOrganizationAdminNotification({
+				organizationId: memberOfOrganization.organizationId,
+				eventType: "NODE_ADDED",
+				eventData: {
+					networkId: member.nwid,
+					networkName: member.nwid,
+					nodeId: member.id,
+					nodeName: name || member.id,
+				},
+			});
+		} catch (_error) {
+			console.error("Member join email delivery failed");
+		}
 	}
+	return saved.row;
 };
 
 /**
@@ -467,21 +453,53 @@ export const reconcileNetworkMembers = async (
 			// New member: create the row (handles naming + join webhooks/notifications).
 			await addNetworkMember(ctx, detail).catch(console.error);
 		}
-		await prisma.network_members.updateMany({
-			where: { nwid, id: detail.id },
-			data: {
-				authorized: !!detail.authorized,
-				ipAssignments: Array.isArray(detail.ipAssignments) ? detail.ipAssignments : [],
-				noAutoAssignIps: !!detail.noAutoAssignIps,
-				activeBridge: !!detail.activeBridge,
-				address: detail.address ?? detail.id,
-				revision: revisionMap[detail.id] ?? null,
-				// Client version + raw controller object cache (#984/#983).
-				...controllerCacheFields(detail),
-				// Smart name preservation (#719): adopt the controller name only when the
-				// DB has none — never clobber a user-set name.
-				...(!db?.name?.trim() && detail.name?.trim() ? { name: detail.name } : {}),
-			},
+		await prisma.$transaction(async (tx) => {
+			await tx.network_members.updateMany({
+				where: { nwid, id: detail.id },
+				data: {
+					authorized: !!detail.authorized,
+					ipAssignments: Array.isArray(detail.ipAssignments) ? detail.ipAssignments : [],
+					noAutoAssignIps: !!detail.noAutoAssignIps,
+					activeBridge: !!detail.activeBridge,
+					address: detail.address ?? detail.id,
+					revision: revisionMap[detail.id] ?? null,
+					// Client version + raw controller object cache (#984/#983).
+					...controllerCacheFields(detail),
+					// Smart name preservation (#719): adopt the controller name only when the
+					// DB has none — never clobber a user-set name.
+					...(!db?.name?.trim() && detail.name?.trim() ? { name: detail.name } : {}),
+				},
+			});
+			if (db?.controllerConfig) {
+				const type =
+					!!db.authorized !== !!detail.authorized
+						? detail.authorized
+							? "node.authorized"
+							: "node.deauthorized"
+						: JSON.stringify(db.ipAssignments) !==
+									JSON.stringify(detail.ipAssignments || []) ||
+								db.noAutoAssignIps !== !!detail.noAutoAssignIps ||
+								db.activeBridge !== !!detail.activeBridge
+							? "node.config.changed"
+							: null;
+				if (type) {
+					const network = await tx.network.findUnique({
+						where: { nwid },
+						select: { name: true },
+					});
+					await enqueueNotification(
+						type,
+						`${type}:${nwid}:${detail.id}:${revisionMap[detail.id]}`,
+						nodeEventContext(
+							{ ...detail, name: db.name || detail.name },
+							network?.name,
+							memberConfigSummary(db),
+							memberConfigSummary(detail),
+						),
+						tx,
+					);
+				}
+			}
 		});
 	}
 
@@ -491,15 +509,32 @@ export const reconcileNetworkMembers = async (
 		.filter((m) => !controllerIdSet.has(m.id) && !m.deleted && !m.permanentlyDeleted)
 		.map((m) => m.id);
 	if (orphanIds.length > 0) {
-		await prisma.network_members.deleteMany({ where: { nwid, id: { in: orphanIds } } });
+		await prisma.$transaction(async (tx) => {
+			const network = await tx.network.findUnique({
+				where: { nwid },
+				select: { name: true },
+			});
+			for (const id of orphanIds) {
+				const db = dbMap.get(id)!;
+				await enqueueNotification(
+					"node.removed",
+					`node.removed:${nwid}:${id}:${db.nodeid}`,
+					nodeEventContext(
+						db as unknown as MemberEntity,
+						network?.name,
+						"网络成员",
+						"已从 Controller 移除",
+					),
+					tx,
+				);
+			}
+			await tx.network_members.deleteMany({ where: { nwid, id: { in: orphanIds } } });
+		});
 	}
 
-	// 6. Live status from a single peers call (Map lookup instead of O(n²) filter).
-	const controllerPeers = await ztController.peers(ctx);
-	const peersByAddress = new Map<string, Peers>();
-	for (const peer of controllerPeers) {
-		peersByAddress.set(peer.address, peer as unknown as Peers);
-	}
+	// Network presence and peer path data have different meanings.
+	const live = await readLiveObservation(ctx, nwid);
+	const peersByAddress = live.peers;
 
 	// 7. Build the active member list from the reconciled DB rows + live status,
 	//    writing back only members whose status actually changed.
@@ -510,31 +545,24 @@ export const reconcileNetworkMembers = async (
 
 	const statusWrites: Promise<unknown>[] = [];
 	const enriched = activeDbMembers.map((db) => {
-		const peers = peersByAddress.get(db.address || "") ?? ({} as Peers);
-		const member = buildServedMember(db, peers);
-		const online = Object.keys(peers).length > 0 && member.conStatus !== 0;
-
-		// diff-skip: offline-and-unchanged members are never rewritten.
-		if (online || db.online !== online) {
-			const data: Partial<network_members> = { online };
-			if (online) {
-				data.lastSeen = new Date();
-				if (member.physicalAddress) data.physicalAddress = member.physicalAddress;
-				// The controller does not bump a member's revision when its client
-				// version changes, so the revision-gated detail fetch above can't keep
-				// the cached version fresh. Persist the live peer version while online;
-				// offline members keep the last known value (#984). The peer object
-				// carries no protocol version, so vProto stays detail-sourced.
-				if (typeof peers.versionMajor === "number" && peers.versionMajor !== -1) {
-					data.vMajor = peers.versionMajor;
-					data.vMinor = peers.versionMinor;
-					data.vRev = peers.versionRev;
-				}
-			}
-			statusWrites.push(
-				prisma.network_members.updateMany({ where: { nwid, id: db.id }, data }),
-			);
+		const peers = peersByAddress.get(db.address || db.id) ?? ({} as Peers);
+		const member = buildServedMember(db, peers, live);
+		const data = observeMember(db, member, live);
+		if (member.online && member.physicalAddress !== db.physicalAddress)
+			data.physicalAddress = member.physicalAddress;
+		if (
+			member.online &&
+			typeof peers.versionMajor === "number" &&
+			peers.versionMajor >= 0
+		) {
+			if (db.vMajor !== peers.versionMajor) data.vMajor = peers.versionMajor;
+			if (db.vMinor !== peers.versionMinor) data.vMinor = peers.versionMinor;
+			if (db.vRev !== peers.versionRev) data.vRev = peers.versionRev;
 		}
+		if (Object.keys(data).length) {
+			statusWrites.push(persistObservedMember(db, member, data));
+		}
+
 		return member;
 	});
 
@@ -555,14 +583,17 @@ export const attachLiveStatus = async (
 	ctx: UserContext,
 	members: network_members[],
 ): Promise<MemberEntity[]> => {
-	const controllerPeers = await ztController.peers(ctx).catch(() => []);
-	const peersByAddress = new Map<string, Peers>();
-	for (const peer of controllerPeers) {
-		peersByAddress.set(peer.address, peer as unknown as Peers);
-	}
-	return members.map((db) =>
-		buildServedMember(db, peersByAddress.get(db.address || "") ?? ({} as Peers)),
-	);
+	const snapshots = new Map<string, LiveObservation>();
+	for (const nwid of new Set(members.map((m) => m.nwid)))
+		snapshots.set(nwid, await readLiveObservation(ctx, nwid));
+	return members.map((db) => {
+		const live = snapshots.get(db.nwid)!;
+		return buildServedMember(
+			db,
+			live.peers.get(db.address || db.id) ?? ({} as Peers),
+			live,
+		);
+	});
 };
 
 /**
@@ -572,18 +603,28 @@ export const attachLiveStatus = async (
  * authorized, status, version — so a stale cached object never wins) plus live
  * peer data and version semantics (#984).
  */
-const buildServedMember = (db: network_members, peers: Peers): MemberEntity => {
-	const { controllerConfig, ...dbFields } = db;
+const buildServedMember = (
+	db: network_members,
+	peers: Peers,
+	live: LiveObservation,
+): MemberEntity => {
+	const {
+		controllerConfig,
+		observationControllerStartedAt: _boot,
+		sourceLastOnlineAt: _source,
+		...dbFields
+	} = db;
 	const cached = (controllerConfig ?? {}) as Partial<MemberEntity>;
-	const activePreferredPath = findActivePreferredPeerPath(peers);
+	const preferredPath = activePreferredPath(peers);
 	const member = {
 		...cached,
 		...dbFields,
 		name: preferredMemberName(dbFields.name, cached.name),
+		lastSeen: db.statusObservedAt ? db.lastSeen : null,
 		peers,
-		physicalAddress: activePreferredPath?.address ?? db.physicalAddress,
+		physicalAddress: preferredPath?.address ?? db.physicalAddress,
 	} as unknown as MemberEntity;
-	member.conStatus = determineConnectionStatus(member);
+	observeMember(db, member, live);
 	applyMemberVersion(member, peers);
 	return member;
 };

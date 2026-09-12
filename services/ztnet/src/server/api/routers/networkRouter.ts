@@ -346,6 +346,8 @@ export const networkRouter = createTRPCRouter({
 						"physicalAddress",
 						"ipAssignments",
 						"lastSeen",
+						"lastOnlineAt",
+						"lastOfflineAt",
 						"creationTime",
 					])
 					.default("id"),
@@ -473,7 +475,10 @@ export const networkRouter = createTRPCRouter({
 		.mutation(async ({ ctx, input }) => {
 			if (input.adminOverride) {
 				if (ctx.session.user.role !== Role.ADMIN) {
-					return throwError("Only global administrators may use adminOverride", "FORBIDDEN");
+					return throwError(
+						"Only global administrators may use adminOverride",
+						"FORBIDDEN",
+					);
 				}
 			} else {
 				// Check if the user has permission to access this network
@@ -536,9 +541,7 @@ export const networkRouter = createTRPCRouter({
 					await ctx.prisma.network.deleteMany({
 						where: {
 							nwid: input.nwid,
-							...(input.adminOverride
-								? {}
-								: { authorId: ctx.session.user.id }),
+							...(input.adminOverride ? {} : { authorId: ctx.session.user.id }),
 						},
 					});
 				}

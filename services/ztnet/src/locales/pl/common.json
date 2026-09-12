@@ -93,7 +93,9 @@
 				"direct": "BEZPOŚREDNIO{version}",
 				"offline": "OFFLINE"
 			},
-			"status": "Status"
+			"status": "Status",
+			"lastOnlineAt": "Last online",
+			"lastSeen": "Last communication"
 		},
 		"search": {
 			"networkSearchPlaceholder": "Szukaj sieci",
@@ -1258,5 +1260,27 @@
 			"description": "Ups! Strona, której szukasz, nie istnieje. Mogła zostać przeniesiona lub usunięta.",
 			"goHome": "Powrót do strony głównej"
 		}
+	},
+	"nodeObservation": {
+		"lastOnline": "Last online",
+		"lastSeen": "Last communication",
+		"noHistory": "No reliable observation recorded yet. Historical times are not backfilled.",
+		"lastSeenHelp": "Last authenticated network configuration request received by the Controller. Time is shown in your browser time zone.",
+		"lastOnlineHelp": "Start of the most recent observed online period, recorded since monitoring began. Time is shown in your browser time zone.",
+		"pathHelp": "Controller → this node. This does not establish the path between two clients; client TCP fallback cannot be inferred here.",
+		"unknownHelp": "No reliable current observation. A Controller restart or collection failure does not mean the node is offline.",
+		"assignmentHelp": "Controller assignment state. The client may still be applying its configuration; client-side errors require client telemetry.",
+		"unknown": "Unknown",
+		"online": "Online",
+		"offline": "Offline",
+		"relayed": "Relayed",
+		"directLan": "Direct (LAN)",
+		"directWan": "Direct (WAN)",
+		"controller": "Controller",
+		"waitingAuthorization": "Waiting for authorization",
+		"waitingAssignment": "Waiting for IP assignment",
+		"manualAssignment": "Manual IP configuration",
+		"autoAssignmentDisabled": "Auto assignment disabled",
+		"notAssigned": "Not assigned"
 	}
 }

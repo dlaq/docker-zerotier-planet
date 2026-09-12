@@ -26,7 +26,12 @@ export interface MemberEntity {
 	ssoExempt: boolean;
 	tags: NumberPairArray;
 	peers: Peers | Record<string, never>;
-	lastSeen?: number | datetime;
+	lastSeen?: number | string | Date | null;
+	lastOnlineAt?: number | string | Date | null;
+	lastOfflineAt?: number | string | Date | null;
+	statusObservedAt?: number | string | Date | null;
+	statusSource?: "controller" | "legacy" | "unavailable";
+	online?: boolean;
 	conStatus?: number;
 	vMajor: number;
 	vMinor: number;

@@ -1,0 +1,79 @@
+--- a/nonfree/controller/EmbeddedNetworkController.hpp
++++ b/nonfree/controller/EmbeddedNetworkController.hpp
+@@ -86,10 +86,11 @@
+ 		}
+ 	};
+ 	struct _MemberStatus {
+-		_MemberStatus() : lastRequestTime(0), authenticationExpiryTime(-1), vMajor(-1), vMinor(-1), vRev(-1), vProto(-1)
++		_MemberStatus() : lastRequestTime(0), lastOnlineTime(0), authenticationExpiryTime(-1), vMajor(-1), vMinor(-1), vRev(-1), vProto(-1)
+ 		{
+ 		}
+ 		int64_t lastRequestTime;
++		int64_t lastOnlineTime;
+ 		int64_t authenticationExpiryTime;
+ 		int vMajor, vMinor, vRev, vProto;
+ 		Dictionary<ZT_NETWORKCONFIG_METADATA_DICT_CAPACITY> lastRequestMetaData;
+--- a/nonfree/controller/EmbeddedNetworkController.cpp
++++ b/nonfree/controller/EmbeddedNetworkController.cpp
+@@ -633,6 +633,9 @@
+ 		if ((now - ms.lastRequestTime) <= ZT_NETCONF_MIN_REQUEST_PERIOD) {
+ 			return;
+ 		}
++		if (! ms.lastRequestTime || ! ms.online(now)) {
++			ms.lastOnlineTime = now;
++		}
+ 		ms.lastRequestTime = now;
+ 	}
+ 
+@@ -1212,6 +1215,51 @@
+ 	};
+ 	s.Get(memberListPath, memberListGet);
+ 	sv6.Get(memberListPath, memberListGet);
++
++	// ZTPlanet: network-scoped observations from authenticated configuration
++	// requests. Peer caches alone cannot establish network member presence.
++	auto memberStatusGet = [&, setContent](const httplib::Request& req, httplib::Response& res) {
++		const uint64_t nwid = Utils::hexStrToU64(req.matches[1].str().c_str());
++		json network;
++		std::vector<json> members;
++		if (! _db.get(nwid, network, members)) {
++			res.status = 404;
++			return;
++		}
++		int64_t now = 0;
++		json observations = json::object();
++		{
++			std::lock_guard<std::mutex> lock(_memberStatus_l);
++			now = OSUtils::now();
++			for (const auto& member : members) {
++				const std::string id = OSUtils::jsonString(member["id"], "");
++				if (id.length() != 10)
++					continue;
++				const auto entry = _memberStatus.find(_MemberStatusKey(nwid, Utils::hexStrToU64(id.c_str())));
++				json observation = json::object();
++				observation["observed"] = false;
++				observation["online"] = false;
++				observation["lastSeen"] = 0;
++				observation["lastOnline"] = 0;
++				if (entry != _memberStatus.end() && entry->second.lastRequestTime > 0) {
++					observation["observed"] = true;
++					observation["online"] = entry->second.online(now);
++					observation["lastSeen"] = entry->second.lastRequestTime;
++					observation["lastOnline"] = entry->second.lastOnlineTime;
++				}
++				observations[id] = observation;
++			}
++		}
++		json out = json::object();
++		out["clock"] = now;
++		out["controllerStartedAt"] = _startTime;
++		out["onlineWindowMs"] = ZT_NETWORK_AUTOCONF_DELAY * 2;
++		out["members"] = observations;
++		setContent(req, res, out.dump());
++	};
++	const std::string memberStatusPath = "/controller/network/([0-9a-fA-F]{16})/member-status";
++	s.Get(memberStatusPath, memberStatusGet);
++	sv6.Get(memberStatusPath, memberStatusGet);
+ 
+ 	auto memberListGet2 = [&, setContent](const httplib::Request& req, httplib::Response& res) {
+ 		auto provider = opentelemetry::trace::Provider::GetTracerProvider();

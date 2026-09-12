@@ -1,4 +1,5 @@
 import { useTranslations } from "next-intl";
+import { memberIpState } from "~/utils/memberConnection";
 import { isIPInSubnet } from "~/utils/isIpInsubnet";
 import { toRfc4193Ip, sixPlane } from "~/utils/IPv6";
 import type { MemberEntity } from "~/types/local/member";
@@ -24,10 +25,11 @@ export const IpAssignmentsCell = ({ original, nwid, network, onDeleteIp }: Props
 	const hasRfc4193 = network?.v6AssignMode?.rfc4193;
 	const has6plane = network?.v6AssignMode?.["6plane"];
 
-	if (!original.ipAssignments?.length && !hasRfc4193 && !has6plane) {
+	const ipState = memberIpState(original, network);
+	if (ipState !== "assigned") {
 		return (
-			<p className="text-gray-500 text-sm">
-				{t("commonTable.header.ipAssignments.notAssigned")}
+			<p className="text-warning text-sm" title={t("nodeObservation.assignmentHelp")}>
+				{t(`nodeObservation.${ipState}`)}
 			</p>
 		);
 	}

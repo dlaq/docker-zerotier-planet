@@ -7,6 +7,7 @@ import { settingsRouter } from "./routers/settingsRouter";
 import { organizationRouter } from "./routers/organizationRouter";
 import { publicRouter } from "./routers/publicRouter";
 import { mfaAuthRouter } from "./routers/mfaAuthRouter";
+import { notificationRouter } from "./routers/notificationRouter";
 import { systemRouter } from "./routers/systemRouter";
 
 /**
@@ -24,6 +25,7 @@ export const appRouter = createTRPCRouter({
 	org: organizationRouter,
 	public: publicRouter,
 	system: systemRouter,
+	notifications: notificationRouter,
 });
 
 // export type definition of API

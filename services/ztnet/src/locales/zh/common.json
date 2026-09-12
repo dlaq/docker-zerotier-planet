@@ -93,7 +93,9 @@
 				"direct": "直接连接{version}",
 				"offline": "离线"
 			},
-			"status": "状态"
+			"status": "状态",
+			"lastOnlineAt": "最近上线",
+			"lastSeen": "最后通信"
 		},
 		"search": {
 			"networkSearchPlaceholder": "搜索网络",
@@ -1258,5 +1260,27 @@
 			"description": "糟糕！您要查找的页面不存在。它可能已被移动或删除。",
 			"goHome": "返回主页"
 		}
+	},
+	"nodeObservation": {
+		"lastOnline": "最近上线",
+		"lastSeen": "最后通信",
+		"noHistory": "尚无可靠观测记录；不会用导入或刷新时间填补历史记录。",
+		"lastSeenHelp": "Controller 最近收到该节点网络配置请求的时间，按当前浏览器时区显示。",
+		"lastOnlineHelp": "开始监测后，最近一段已观测在线周期的起始时间，按当前浏览器时区显示。",
+		"pathHelp": "表示 Controller → 此节点的连接，不能代表任意两台客户端之间的连接；无法据此判断客户端 TCP 回退。",
+		"unknownHelp": "当前缺少可靠观测。Controller 重启或采集失败不等于节点离线。",
+		"assignmentHelp": "显示 Controller 的授权和地址分配状态；客户端实际应用结果及客户端错误需要客户端上报。",
+		"unknown": "未知",
+		"online": "在线",
+		"offline": "离线",
+		"relayed": "中转",
+		"directLan": "直联（内网）",
+		"directWan": "直联（公网）",
+		"controller": "控制器",
+		"waitingAuthorization": "等待授权",
+		"waitingAssignment": "等待 IP 分配",
+		"manualAssignment": "手动配置 IP",
+		"autoAssignmentDisabled": "未启用自动分配",
+		"notAssigned": "未分配"
 	}
 }

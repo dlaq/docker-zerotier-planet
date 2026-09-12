@@ -262,6 +262,8 @@ export async function sendMessagePusher(
 			body: JSON.stringify({
 				title: message.title.slice(0, 512),
 				description: message.content.slice(0, 32_768),
+				async: false,
+				render_mode: "raw",
 				token,
 				...(channel ? { channel } : {}),
 			}),
@@ -272,6 +274,29 @@ export async function sendMessagePusher(
 		if (!response.ok) {
 			throw new Error(`Message Pusher returned HTTP ${response.status}`);
 		}
+		if (!response.body) throw new Error("Message Pusher returned no result");
+		const reader = response.body.getReader();
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				size += value.length;
+				if (size > 65536) throw new Error("Message Pusher response exceeds limit");
+				chunks.push(value);
+			}
+		} finally {
+			await reader.cancel().catch(() => {});
+		}
+		let result: { success?: unknown };
+		try {
+			result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		} catch {
+			throw new Error("Message Pusher returned an invalid result");
+		}
+		if (result?.success !== true)
+			throw new Error("Message Pusher did not confirm delivery");
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") {
 			throw new Error("Message Pusher request timed out");
@@ -308,10 +333,10 @@ export async function sendMailWithTemplate(
 	const smtpConfigured = Boolean(
 		globalOptions.smtpHost && globalOptions.smtpPort && globalOptions.smtpEmail,
 	);
-	const pusherConfigured = Boolean(globalOptions.messagePusherEnabled);
+	const pusherConfigured = false; // Global operations pushes use the event outbox.
 	if (!smtpConfigured && !pusherConfigured) {
 		throw new Error(
-			"No notification channel is configured. Configure SMTP or Message Pusher in the admin panel.",
+			"SMTP is required for recipient-specific account and invitation emails.",
 		);
 	}
 
@@ -415,7 +440,11 @@ async function renderTemplate(
 	templateData: Record<string, unknown>,
 ): Promise<string> {
 	try {
-		return await ejs.render(JSON.stringify(template), templateData, { async: true });
+		const [subject, body] = await Promise.all([
+			ejs.render(template.subject, templateData, { async: true }),
+			ejs.render(template.body, templateData, { async: true }),
+		]);
+		return JSON.stringify({ subject, body });
 	} catch (error) {
 		console.error(`Failed to render template: ${error.message}`);
 		throw new Error("Template rendering failed");

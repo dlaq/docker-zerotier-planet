@@ -1,3 +1,4 @@
+import { accountNotification } from "~/server/notifications/service";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import {
@@ -615,6 +616,16 @@ export const authRouter = createTRPCRouter({
 				// the user's next sign-in would silently fail with "invalid credentials".
 				if (newHash) {
 					await upsertCredentialAccount(user.id, newHash, tx);
+					await accountNotification(
+						"user.password.changed",
+						user,
+						{
+							ip: getClientRateLimitIdentifier(ctx.req),
+							device: String(ctx.req?.headers?.["user-agent"] || "未采集"),
+							result: "密码已修改；其他登录会话保持原有状态。",
+						},
+						tx,
+					);
 				}
 			});
 		}),
@@ -819,6 +830,16 @@ export const authRouter = createTRPCRouter({
 					// Mirror into the better-auth credential Account so /sign-in/email succeeds.
 					await upsertCredentialAccount(id, newHash, tx);
 					await tx.session.deleteMany({ where: { userId: id } });
+					await accountNotification(
+						"user.password.reset_completed",
+						user,
+						{
+							ip: getClientRateLimitIdentifier(ctx.req),
+							device: String(ctx.req?.headers?.["user-agent"] || "未采集"),
+							result: "密码重置完成，已撤销该账号的全部登录会话。",
+						},
+						tx,
+					);
 					return { success: true };
 				});
 			} catch (error) {

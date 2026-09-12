@@ -1,3 +1,4 @@
+import EventNotifications from "~/components/adminPage/mail/eventNotifications";
 import { type ReactElement, useState, useEffect } from "react";
 import { LayoutAdminAuthenticated } from "~/components/layouts/layout";
 import { api } from "~/utils/api";
@@ -379,7 +380,8 @@ const Mail = () => {
 			<MenuSectionDividerWrapper title="Message Pusher 推送渠道" className="space-y-5">
 				<div className="alert alert-info text-sm">
 					<span>
-						可与 SMTP 同时启用，也可以只启用推送。填写自建 message-pusher 的根地址（例如
+						可与 SMTP 同时启用；仅启用推送时不能发送个人邀请、找回密码等邮件。填写自建
+						message-pusher 的根地址（例如
 						http://message-pusher:3000）、用户名和访问令牌；请求会发送到
 						/push/&lt;用户名&gt;，令牌仅加密保存在服务器。
 					</span>
@@ -388,7 +390,7 @@ const Mail = () => {
 					<label>
 						<p className="font-medium">启用 Message Pusher</p>
 						<p className="text-sm text-gray-500">
-							登录、邀请、设备和安全通知会发送到配置的推送渠道。
+							下方启用的节点及账号事件会发送到管理员配置的推送渠道。
 						</p>
 					</label>
 					<input
@@ -464,7 +466,7 @@ const Mail = () => {
 						<input
 							type="text"
 							className="input input-bordered input-sm w-full"
-							placeholder="telegram 或 webhook"
+							placeholder="填写网关中创建的渠道名称"
 							value={formState.messagePusherChannel}
 							onChange={(e) => handleInputChange("messagePusherChannel", e.target.value)}
 						/>
@@ -507,20 +509,13 @@ const Mail = () => {
 				<button
 					type="button"
 					className="btn btn-sm"
-					disabled={
-						sendingTestMail ||
-						hasChanges ||
-						(!formState.smtpHost &&
-							(!formState.messagePusherEnabled ||
-								!formState.messagePusherUrl ||
-								!formState.messagePusherUsername))
-					}
+					disabled={sendingTestMail || hasChanges || !formState.smtpHost}
 					onClick={() => sendTestMail({ type: MailTemplateKey.Notification })}
 				>
 					{sendingTestMail ? (
 						<span className="loading loading-spinner loading-sm" />
 					) : (
-						"发送测试通知（SMTP / Message Pusher）"
+						"发送 SMTP 测试邮件"
 					)}
 				</button>
 				{hasChanges && (
@@ -529,6 +524,8 @@ const Mail = () => {
 					</span>
 				)}
 			</div>
+
+			<EventNotifications />
 
 			{/* Email Templates */}
 			<MenuSectionDividerWrapper title={t("mail.emailTemplates")} className="space-y-3">

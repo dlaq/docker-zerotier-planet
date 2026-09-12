@@ -14,12 +14,7 @@ import { GetServerSidePropsContext } from "next";
 import { ParsedUrlQuery } from "querystring";
 import { getServerAuthSession } from "~/lib/authSession";
 
-enum ConnectionStatus {
-	Offline = 0,
-	Relayed = 1,
-	DirectLAN = 1,
-	DirectWAN = 2,
-}
+import { ConnectionStatus } from "~/utils/memberConnection";
 jest.mock("~/server/db", () => ({
 	prisma: {
 		organization: {
@@ -354,7 +349,7 @@ describe("NetworkById component", () => {
 		);
 		await waitFor(
 			() => {
-				expect(screen.getByText("DIRECT")).toHaveClass("text-success");
+				expect(screen.getByText("Direct (WAN)")).toHaveClass("text-success");
 			},
 			{ timeout: 2000 },
 		);
@@ -406,7 +401,7 @@ describe("NetworkById component", () => {
 		);
 		await waitFor(
 			() => {
-				expect(screen.getByText("RELAYED")).toHaveClass("text-warning");
+				expect(screen.getByText("Relayed")).toHaveClass("text-warning");
 			},
 			{ timeout: 2000 },
 		);
@@ -456,13 +451,13 @@ describe("NetworkById component", () => {
 		);
 		await waitFor(
 			() => {
-				expect(screen.getByText("offline"));
+				expect(screen.getByText("Offline"));
 			},
 			{ timeout: 2000 },
 		);
 		await waitFor(
 			() => {
-				const parentSpan = screen.getByTitle("User is offline");
+				const parentSpan = screen.getByText("Offline");
 				expect(parentSpan).toHaveClass("text-error");
 			},
 			{ timeout: 2000 },
