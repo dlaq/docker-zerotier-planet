@@ -23,14 +23,25 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
 	if (req.method === "GET") {
 		try {
 			const folderPath = path.resolve(`${ZT_FOLDER}/zt-mkworld`);
-			const filePath = path.join(folderPath, "planet.custom");
+			// A migration can preserve the active Planet without preserving the
+			// generated-world workspace. Prefer the generated artifact, then fall
+			// back to the active/legacy copy so downloads do not fail with a false
+			// 404 after a valid Controller import.
+			const candidates = [
+				path.join(folderPath, "planet.custom"),
+				path.resolve(`${ZT_FOLDER}/planet`),
+				path.resolve(`${ZT_FOLDER}/legacy-dist/planet`),
+			];
+			const filePath = candidates.find((candidate) => {
+				try {
+					const stat = fs.statSync(candidate);
+					return stat.isFile() && stat.size > 0;
+				} catch {
+					return false;
+				}
+			});
 
-			// Check if the directory and file exist
-			if (
-				!fs.existsSync(folderPath) ||
-				!fs.statSync(folderPath).isDirectory() ||
-				!fs.existsSync(filePath)
-			) {
+			if (!filePath) {
 				return res.status(404).send("Folder or file not found.");
 			}
 
@@ -38,10 +49,7 @@ export default async (req: NextApiRequest, res: NextApiResponse) => {
 			const fileStream = fs.createReadStream(filePath);
 
 			// Set the headers
-			res.setHeader(
-				"Content-Disposition",
-				"attachment; filename=planet.custom",
-			);
+			res.setHeader("Content-Disposition", "attachment; filename=planet.custom");
 			res.setHeader("Content-Type", "application/octet-stream");
 
 			// Pipe the read stream to the response
