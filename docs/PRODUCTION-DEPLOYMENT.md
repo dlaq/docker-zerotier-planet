@@ -544,7 +544,11 @@ services:
     ports:
       - "${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${MANAGEMENT_PORT:-3443}:3443/tcp"
     networks:
-      - app-network
+      # Keep the gateway off the controller's fixed address. Without a fixed
+      # address Docker can reuse 172.31.255.2 when the controller is restarting,
+      # preventing the ZeroTier service from attaching to its required address.
+      app-network:
+        ipv4_address: 172.31.255.5
     depends_on:
       gateway-init:
         condition: service_completed_successfully
