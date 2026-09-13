@@ -253,7 +253,7 @@ services:
       ZT_SECRET_FILE: /run/zerotier-controller/authtoken.secret
       ZT_IDENTITY_PUBLIC_FILE: /run/zerotier-controller/identity.public
       # 1Panel 粘贴模式没有宿主机 config-agent；把 Compose 的实际绑定参数
-      # 传给系统与暴露面页，让它能显示只读的有效配置而不是无限加载。
+      # 传给暴露面页，让它能显示只读的有效配置而不是无限加载。
       MANAGEMENT_BIND_ADDRESS: "${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}"
       MANAGEMENT_PORT: "${MANAGEMENT_PORT:-3443}"
       MANAGEMENT_ALLOWED_CIDRS: "${MANAGEMENT_ALLOWED_CIDRS:-}"
