@@ -391,6 +391,9 @@ services:
       RATE_LIMIT_MAX_REQUESTS_SHORT: "${RATE_LIMIT_MAX_REQUESTS_SHORT:-10}"
       ZTPLANET_LOGIN_ATTEMPTS: "${ZTPLANET_LOGIN_ATTEMPTS:-5}"
       ZTPLANET_LOGIN_LOCKOUT_SECONDS: "${ZTPLANET_LOGIN_LOCKOUT_SECONDS:-900}"
+      # Optional explicit HTTP(S) forward proxy for Message Pusher only. This
+      # is needed on VPS networks that block direct outbound TCP/443.
+      ZTPLANET_MESSAGE_PUSHER_PROXY: "${ZTPLANET_MESSAGE_PUSHER_PROXY:-}"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
       - ./data/zerotier:/run/zerotier-controller:ro
