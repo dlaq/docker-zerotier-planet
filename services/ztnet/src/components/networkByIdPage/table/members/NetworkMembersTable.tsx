@@ -20,6 +20,7 @@ import { useMemberColumns } from "./useMemberColumns";
 import { useTablePersistence } from "./hooks/useTablePersistence";
 import { MembersToolbar } from "./components/MembersToolbar";
 import { TABLE_MIN_WIDTH } from "./constants";
+import type { MemberFilter } from "~/utils/memberFilter";
 
 declare module "@tanstack/react-table" {
 	// biome-ignore lint/correctness/noUnusedVariables: module augmentation
@@ -60,6 +61,7 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 	const socketConnected = useNetworkSocketStore((s) => s.connected);
 	const refetchInterval = central || socketConnected ? 60000 : 20000;
 	const [globalFilter, setGlobalFilter] = useState("");
+	const [memberFilter, setMemberFilter] = useState<MemberFilter>("all");
 	const {
 		sorting,
 		setSorting,
@@ -114,6 +116,7 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 			page: safePage,
 			pageSize: safePageSize,
 			search: globalFilter || undefined,
+			memberFilter,
 			// biome-ignore lint/suspicious/noExplicitAny: narrowed to the server enum above
 			sortBy: sortBy as any,
 			sortDir,
@@ -134,7 +137,7 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional triggers
 	useEffect(() => {
 		setPagination((p) => ({ ...p, pageIndex: 0 }));
-	}, [globalFilter, sorting]);
+	}, [globalFilter, memberFilter, sorting]);
 
 	// Mirror the fetched page into local state, but freeze updates while an inline
 	// editor is focused so a background refetch never rebuilds the row being typed
@@ -202,6 +205,8 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 			<MembersToolbar
 				globalFilter={globalFilter}
 				onGlobalFilterChange={setGlobalFilter}
+				memberFilter={memberFilter}
+				onMemberFilterChange={setMemberFilter}
 				showExtendedView={showExtendedView}
 				onToggleExtendedView={() => setShowExtendedView(!showExtendedView)}
 			/>

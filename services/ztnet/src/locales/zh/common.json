@@ -369,6 +369,46 @@
 		"networkMembersTable": {
 			"searchPlaceholder": "搜索任何东西...",
 			"optionModalTitle": "成员选项",
+			"filters": {
+				"label": "筛选成员",
+				"groups": {
+					"current": "当前状态",
+					"online": "最近在线",
+					"seen": "最后通信",
+					"authorization": "授权状态",
+					"connection": "连接方式"
+				},
+				"options": {
+					"all": "全部成员",
+					"online": "当前在线",
+					"offline": "当前离线",
+					"online_15m": "最近 15 分钟在线",
+					"online_1h": "最近 1 小时在线",
+					"online_6h": "最近 6 小时在线",
+					"online_24h": "最近 24 小时在线",
+					"online_3d": "最近 3 天在线",
+					"online_7d": "最近 7 天在线",
+					"online_30d": "最近 30 天在线",
+					"online_90d": "最近 90 天在线",
+					"online_180d": "最近 180 天在线",
+					"online_365d": "最近一年在线",
+					"never_online": "从未上线",
+					"seen_15m": "最近 15 分钟通信",
+					"seen_1h": "最近 1 小时通信",
+					"seen_6h": "最近 6 小时通信",
+					"seen_24h": "最近 24 小时通信",
+					"seen_7d": "最近 7 天通信",
+					"seen_30d": "最近 30 天通信",
+					"never_seen": "从未通信",
+					"authorized": "已授权",
+					"unauthorized": "未授权",
+					"direct_lan": "直联（内网）成员",
+					"direct_wan": "直联（公网）成员",
+					"relayed": "中转成员",
+					"controller": "控制器成员",
+					"unknown_connection": "连接未知成员"
+				}
+			},
 			"tableRow": {
 				"updateName": "点击更改名称",
 				"updateDescription": "点击添加描述"

@@ -105,6 +105,58 @@ describe("network.getNetworkMembers", () => {
 		expect(svc.triggerBackgroundReconcile).not.toHaveBeenCalled();
 	});
 
+	test("applies a recent-online filter before paginating the DB", async () => {
+		const ctx = makeCtx();
+		ctx.prisma.network_members.count
+			.mockResolvedValueOnce(5) // cachedCount → warm
+			.mockResolvedValueOnce(2) // filtered totalCount
+			.mockResolvedValueOnce(1); // filtered authorizedCount
+		ctx.prisma.network_members.findMany.mockResolvedValue([]);
+
+		const caller = appRouter.createCaller(ctx);
+		await caller.network.getNetworkMembers({
+			nwid: "nw1",
+			memberFilter: "online_24h",
+		});
+
+		const args = ctx.prisma.network_members.findMany.mock.calls[0][0];
+		expect(args.where).toMatchObject({ nwid: "nw1", deleted: false });
+		expect(args.where.AND).toEqual([
+			{
+				OR: [
+					{ online: true },
+					{ lastOnlineAt: { gte: expect.any(Date) } },
+					{ lastOfflineAt: { gte: expect.any(Date) } },
+				],
+			},
+		]);
+		const authorizedCountArgs = ctx.prisma.network_members.count.mock.calls[2][0];
+		expect(authorizedCountArgs.where).toMatchObject({ authorized: true });
+		expect(authorizedCountArgs.where.AND).toEqual(args.where.AND);
+	});
+
+	test("filters hosted members in memory and returns filtered counts", async () => {
+		const ctx = makeCtx();
+		zt.central_network_and_members.mockResolvedValue({
+			members: [
+				{ id: "online", online: true, authorized: true },
+				{ id: "offline", online: false, authorized: true },
+				{ id: "unauthorized", online: true, authorized: false },
+			],
+		});
+
+		const caller = appRouter.createCaller(ctx);
+		const result = await caller.network.getNetworkMembers({
+			nwid: "nw1",
+			central: true,
+			memberFilter: "online",
+		});
+
+		expect(result.members.map((m) => m.id)).toEqual(["online", "unauthorized"]);
+		expect(result.totalCount).toBe(2);
+		expect(result.authorizedCount).toBe(1);
+	});
+
 	test("central networks paginate the hosted member list in memory", async () => {
 		const ctx = makeCtx();
 		zt.central_network_and_members.mockResolvedValue({

@@ -10,7 +10,7 @@ import type { TagsByName, NetworkEntity, RoutesEntity } from "~/types/local/netw
 import type { MemberEntity, CapabilitiesByName } from "~/types/local/member";
 import type { CentralNetwork } from "~/types/central/network";
 import { checkNetworkAccess } from "~/utils/networkAccess";
-import { type network, type network_members, Role } from "@prisma/client";
+import { type network, type network_members, Prisma, Role } from "@prisma/client";
 import {
 	HookType,
 	type NetworkConfigChanged,
@@ -27,6 +27,14 @@ import { networkProvisioningFactory } from "../services/networkService";
 import { Address4, Address6 } from "ip-address";
 import { MailTemplateKey } from "~/utils/enums";
 import { syncNetworkRoutesOnce } from "../services/routesService";
+import { ConnectionStatus } from "~/utils/memberConnection";
+import {
+	MEMBER_FILTER_VALUES,
+	ONLINE_FILTER_WINDOWS,
+	SEEN_FILTER_WINDOWS,
+	matchesMemberFilter,
+	type MemberFilter,
+} from "~/utils/memberFilter";
 
 const RouteSchema = z.object({
 	target: z
@@ -49,6 +57,66 @@ const RouteSchema = z.object({
 });
 
 const RoutesArraySchema = z.array(RouteSchema);
+
+/** Translate a members-table filter into a DB predicate. The status observer
+ * keeps these fields current in the background, while the live response still
+ * enriches each returned row with the latest peer status. */
+const memberFilterWhere = (
+	filter: MemberFilter,
+	now = Date.now(),
+): Prisma.network_membersWhereInput | undefined => {
+	const fiveMinutesAgo = new Date(now - 5 * 60 * 1000);
+	const notCurrentlyOnline: Prisma.network_membersWhereInput = {
+		OR: [
+			{ online: false },
+			{
+				online: null,
+				OR: [{ lastSeen: null }, { lastSeen: { lt: fiveMinutesAgo } }],
+			},
+		],
+	};
+
+	if (filter === "all") return undefined;
+	if (filter === "online") return { online: true };
+	if (filter === "offline") return notCurrentlyOnline;
+
+	const onlineWindow = ONLINE_FILTER_WINDOWS[filter];
+	if (onlineWindow !== undefined) {
+		return {
+			OR: [
+				{ online: true },
+				{ lastOnlineAt: { gte: new Date(now - onlineWindow) } },
+				{ lastOfflineAt: { gte: new Date(now - onlineWindow) } },
+			],
+		};
+	}
+	if (filter === "never_online") {
+		return {
+			AND: [notCurrentlyOnline, { lastOnlineAt: null }],
+		};
+	}
+
+	const seenWindow = SEEN_FILTER_WINDOWS[filter];
+	if (seenWindow !== undefined) return { lastSeen: { gte: new Date(now - seenWindow) } };
+	if (filter === "never_seen") return { lastSeen: null };
+
+	if (filter === "authorized") return { authorized: true };
+	if (filter === "unauthorized")
+		return { OR: [{ authorized: false }, { authorized: null }] };
+
+	const connectionStatus: Partial<Record<MemberFilter, number>> = {
+		direct_lan: ConnectionStatus.DirectLAN,
+		direct_wan: ConnectionStatus.DirectWAN,
+		relayed: ConnectionStatus.Relayed,
+		controller: ConnectionStatus.Controller,
+		unknown_connection: ConnectionStatus.Unknown,
+	};
+	const status = connectionStatus[filter];
+	if (status === undefined) return undefined;
+	if (filter === "unknown_connection")
+		return { OR: [{ connectionStatus: status }, { connectionStatus: null }] };
+	return { connectionStatus: status };
+};
 
 export const networkRouter = createTRPCRouter({
 	getUserNetworks: protectedProcedure
@@ -337,6 +405,7 @@ export const networkRouter = createTRPCRouter({
 				// the background refresh for snappier page loads.
 				sync: z.boolean().optional().default(false),
 				search: z.string().trim().optional(),
+				memberFilter: z.enum(MEMBER_FILTER_VALUES).default("all"),
 				sortBy: z
 					.enum([
 						"id",
@@ -366,11 +435,14 @@ export const networkRouter = createTRPCRouter({
 					true,
 				);
 				const all = (response?.members ?? []) as MemberEntity[];
+				const filtered = all.filter((member) =>
+					matchesMemberFilter(member, input.memberFilter),
+				);
 				const start = input.page * input.pageSize;
 				return {
-					members: all.slice(start, start + input.pageSize),
-					totalCount: all.length,
-					authorizedCount: all.filter((m) => m.authorized).length,
+					members: filtered.slice(start, start + input.pageSize),
+					totalCount: filtered.length,
+					authorizedCount: filtered.filter((m) => m.authorized).length,
 				};
 			}
 
@@ -390,7 +462,8 @@ export const networkRouter = createTRPCRouter({
 			}
 
 			const search = input.search;
-			const where = {
+			const filterPredicate = memberFilterWhere(input.memberFilter);
+			const where: Prisma.network_membersWhereInput = {
 				nwid: input.nwid,
 				deleted: false,
 				...(search
@@ -405,6 +478,7 @@ export const networkRouter = createTRPCRouter({
 							],
 						}
 					: {}),
+				...(filterPredicate ? { AND: [filterPredicate] } : {}),
 			};
 
 			const skip = input.page * input.pageSize;
@@ -454,7 +528,7 @@ export const networkRouter = createTRPCRouter({
 			const [totalCount, authorizedCount] = await Promise.all([
 				ctx.prisma.network_members.count({ where }),
 				ctx.prisma.network_members.count({
-					where: { nwid: input.nwid, deleted: false, authorized: true },
+					where: { ...where, authorized: true },
 				}),
 			]);
 

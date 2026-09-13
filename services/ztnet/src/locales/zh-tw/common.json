@@ -369,6 +369,46 @@
 		"networkMembersTable": {
 			"searchPlaceholder": "搜尋任何東西...",
 			"optionModalTitle": "成員選項",
+			"filters": {
+				"label": "Filter members",
+				"groups": {
+					"current": "Current status",
+					"online": "Online history",
+					"seen": "Last communication",
+					"authorization": "Authorization",
+					"connection": "Connection type"
+				},
+				"options": {
+					"all": "All members",
+					"online": "Currently online",
+					"offline": "Currently offline",
+					"online_15m": "Online in the last 15 minutes",
+					"online_1h": "Online in the last hour",
+					"online_6h": "Online in the last 6 hours",
+					"online_24h": "Online in the last 24 hours",
+					"online_3d": "Online in the last 3 days",
+					"online_7d": "Online in the last 7 days",
+					"online_30d": "Online in the last 30 days",
+					"online_90d": "Online in the last 90 days",
+					"online_180d": "Online in the last 180 days",
+					"online_365d": "Online in the last year",
+					"never_online": "Never online",
+					"seen_15m": "Communicated in the last 15 minutes",
+					"seen_1h": "Communicated in the last hour",
+					"seen_6h": "Communicated in the last 6 hours",
+					"seen_24h": "Communicated in the last 24 hours",
+					"seen_7d": "Communicated in the last 7 days",
+					"seen_30d": "Communicated in the last 30 days",
+					"never_seen": "Never communicated",
+					"authorized": "Authorized",
+					"unauthorized": "Unauthorized",
+					"direct_lan": "Direct (LAN) members",
+					"direct_wan": "Direct (WAN) members",
+					"relayed": "Relayed members",
+					"controller": "Controller members",
+					"unknown_connection": "Unknown connection members"
+				}
+			},
 			"tableRow": {
 				"updateName": "點擊修改名稱",
 				"updateDescription": "點擊新增描述"
