@@ -70,6 +70,11 @@ export default function EventNotifications() {
 				渠道。请将该渠道限定为运维人员可见。密码、重置链接、验证码和会话令牌不会进入事件消息。个人邀请及找回密码邮件仍通过
 				SMTP 发送给对应用户。
 			</p>
+			<p className="text-sm opacity-80">
+				生产机无法直连外网时，请在 1Panel 环境变量设置
+				<code className="mx-1">ZTPLANET_MESSAGE_PUSHER_PROXY</code>
+				；测试消息会在后台发送并在下方记录真实结果。
+			</p>
 			<div className="flex flex-wrap items-center gap-3">
 				<label>
 					事件类型{" "}

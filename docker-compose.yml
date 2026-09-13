@@ -164,6 +164,10 @@ services:
       RATE_LIMIT_MAX_REQUESTS_SHORT: "${RATE_LIMIT_MAX_REQUESTS_SHORT:-10}"
       ZTPLANET_LOGIN_ATTEMPTS: "${ZTPLANET_LOGIN_ATTEMPTS:-5}"
       ZTPLANET_LOGIN_LOCKOUT_SECONDS: "${ZTPLANET_LOGIN_LOCKOUT_SECONDS:-900}"
+      # Node's native fetch ignores proxy environment variables unless the
+      # caller opts in. Message Pusher uses an explicit proxy setting instead
+      # so an isolated VPS can reach the gateway without proxying other calls.
+      ZTPLANET_MESSAGE_PUSHER_PROXY: "${ZTPLANET_MESSAGE_PUSHER_PROXY:-}"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
       - ./data/zerotier:/run/zerotier-controller:ro

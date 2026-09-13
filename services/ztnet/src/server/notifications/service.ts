@@ -27,6 +27,23 @@ export function destinationFingerprint(options: GlobalOptions) {
 		)
 		.digest("hex");
 }
+
+/** Keep delivery history actionable without persisting upstream response data. */
+export function notificationDeliveryError(error: unknown): string {
+	const message = error instanceof Error ? error.message : "";
+	if (message === "Message Pusher request timed out") {
+		return "连接 Message Pusher 超时；请检查生产机出站网络或设置 ZTPLANET_MESSAGE_PUSHER_PROXY。";
+	}
+	if (message === "Message Pusher request failed") {
+		return "无法连接 Message Pusher；请检查 DNS、出站 TCP/443 或设置 ZTPLANET_MESSAGE_PUSHER_PROXY。";
+	}
+	const status = message.match(/^Message Pusher returned HTTP ([2-5]\d\d)$/)?.[1];
+	if (status) return `Message Pusher 网关返回 HTTP ${status}，未确认投递。`;
+	if (message === "Message Pusher did not confirm delivery") {
+		return "Message Pusher 已响应但未确认投递；请检查渠道名称、渠道令牌和收件人配置。";
+	}
+	return "网关未确认投递成功。请检查目标渠道和网关，再决定是否重试。";
+}
 const dateText = (value?: Date | number | string | null) =>
 	value && Number.isFinite(new Date(value).getTime())
 		? new Date(value).toISOString()
@@ -276,13 +293,13 @@ export async function drainNotifications() {
 				where: { id: job.id },
 				data: { status: "sent", deliveredAt: new Date(), lastError: null },
 			});
-		} catch (_error) {
+		} catch (error) {
 			// Never persist arbitrary upstream response text, URLs or credential echoes.
 			await prisma.notificationDelivery.update({
 				where: { id: job.id },
 				data: {
 					status: "unknown",
-					lastError: "网关未确认投递成功。请检查目标渠道和网关，再决定是否重试。",
+					lastError: notificationDeliveryError(error),
 				},
 			});
 		}

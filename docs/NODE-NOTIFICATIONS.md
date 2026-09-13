@@ -44,7 +44,7 @@
 
 发送通过 PostgreSQL 持久化队列执行；节点状态及相关事件在同一数据库事务中提交。登录会话同时作为恢复来源，启动后可补录尚未入队的新会话，既有会话迁移时只建基线。
 
-网关请求使用 `async: false`、纯文本 `description` 和 `render_mode: raw`。只有 HTTP 成功且 JSON `success === true` 才标记“网关已确认”，不等同于用户已阅读。HTTP 200 内的 `success: false`、无效 JSON、超限响应及请求中断均不能算成功。
+网关请求使用 `async: false`、同时填充 `description` 与 `content`、以及 `render_mode: raw`。只有 HTTP 成功且 JSON `success === true` 才标记“网关已确认”，不等同于用户已阅读。HTTP 200 内的 `success: false`、无效 JSON、超限响应及请求中断均不能算成功。生产机不能直连外网时，可在 1Panel 环境变量中设置 `ZTPLANET_MESSAGE_PUSHER_PROXY`，该代理只用于此网关请求。
 
 上游网关没有严格幂等保证。发送中断或无法确认结果时，记录为“结果未知”，不盲目自动重发；管理员检查目标渠道并接受可能重复后可手动重试。更换目的地会取消旧目的地的排队消息；超过 24 小时的未发送消息取消，已结束记录保留 30 天。
 

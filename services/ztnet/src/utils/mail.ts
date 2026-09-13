@@ -1,4 +1,5 @@
 import nodemailer, { type TransportOptions } from "nodemailer";
+import axios, { type AxiosProxyConfig } from "axios";
 import { throwError } from "~/server/helpers/errorHandler";
 import {
 	MESSAGE_PUSHER_SECRET,
@@ -177,6 +178,14 @@ export function validateMessagePusherUrl(value: string): string {
 	return parsed.toString().replace(/\/+$/, "");
 }
 
+function containsControlCharacters(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code <= 0x1f || code === 0x7f) return true;
+	}
+	return false;
+}
+
 function decryptStoredSecret(value: string, context: string): string {
 	try {
 		// A value without the encrypted iv:ciphertext form can only be a legacy
@@ -192,7 +201,7 @@ function decryptStoredSecret(value: string, context: string): string {
 
 function messagePusherEndpoint(baseUrl: string, username: string): URL {
 	const normalizedUrl = validateMessagePusherUrl(baseUrl);
-	if (!username || username.length > 128 || /[\u0000-\u001f\u007f]/.test(username)) {
+	if (!username || username.length > 128 || containsControlCharacters(username)) {
 		throw new Error(
 			"Message Pusher username is required and contains invalid characters",
 		);
@@ -203,6 +212,57 @@ function messagePusherEndpoint(baseUrl: string, username: string): URL {
 	parsed.search = "";
 	parsed.hash = "";
 	return parsed;
+}
+
+/**
+ * Return the explicitly configured egress proxy for Message Pusher.
+ *
+ * The production VPS is allowed to use a forward proxy without putting that
+ * proxy (or its credentials) in the database.  `proxy: false` is returned
+ * when it is not configured so ambient HTTP(S)_PROXY variables cannot change
+ * where administrator notifications are sent unexpectedly.
+ */
+function messagePusherProxy(): AxiosProxyConfig | false {
+	const value = process.env.ZTPLANET_MESSAGE_PUSHER_PROXY?.trim();
+	if (!value) return false;
+	if (value.length > 512) {
+		throw new Error("Message Pusher proxy URL is too long");
+	}
+	let parsed: URL;
+	try {
+		parsed = new URL(value);
+	} catch {
+		throw new Error("Message Pusher proxy URL must be an absolute http(s) URL");
+	}
+	if (
+		(parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+		!parsed.hostname ||
+		parsed.pathname !== "/" ||
+		parsed.search ||
+		parsed.hash
+	) {
+		throw new Error("Message Pusher proxy URL must be a proxy origin without a path");
+	}
+	const port = parsed.port
+		? Number(parsed.port)
+		: parsed.protocol === "https:"
+			? 443
+			: 80;
+	if (!Number.isInteger(port) || port < 1 || port > 65535) {
+		throw new Error("Message Pusher proxy URL contains an invalid port");
+	}
+	const proxy: AxiosProxyConfig = {
+		protocol: parsed.protocol.slice(0, -1),
+		host: parsed.hostname,
+		port,
+	};
+	if (parsed.username || parsed.password) {
+		proxy.auth = {
+			username: decodeURIComponent(parsed.username),
+			password: decodeURIComponent(parsed.password),
+		};
+	}
+	return proxy;
 }
 
 function htmlToText(value: string): string {
@@ -245,65 +305,57 @@ export async function sendMessagePusher(
 		throw new Error("Message Pusher token is empty or too long");
 	}
 	const channel = globalOptions.messagePusherChannel?.trim();
-	if (channel && (channel.length > 128 || /[\u0000-\u001f\u007f]/.test(channel))) {
+	if (channel && (channel.length > 128 || containsControlCharacters(channel))) {
 		throw new Error("Message Pusher channel contains invalid characters");
 	}
 
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 10_000);
+	const proxy = messagePusherProxy();
 	try {
-		const response = await fetch(endpoint, {
-			method: "POST",
-			redirect: "error",
-			headers: {
-				"content-type": "application/json",
-				accept: "application/json, text/plain;q=0.5",
-			},
-			body: JSON.stringify({
+		const response = await axios.post(
+			endpoint.toString(),
+			{
 				title: message.title.slice(0, 512),
 				description: message.content.slice(0, 32_768),
+				// Some channels (notably corp_app) use `content` as their
+				// primary body. Sending both fields keeps text-card and markdown
+				// channel configurations useful without changing the template.
+				content: message.content.slice(0, 32_768),
 				async: false,
 				render_mode: "raw",
 				token,
 				...(channel ? { channel } : {}),
-			}),
-			signal: controller.signal,
-		});
-		// Do not include response text: a misconfigured push service may echo
-		// credentials or administrator data in its error response.
-		if (!response.ok) {
+			},
+			{
+				timeout: 10_000,
+				maxContentLength: 65_536,
+				maxBodyLength: 65_536,
+				maxRedirects: 0,
+				proxy,
+				validateStatus: () => true,
+				headers: {
+					"content-type": "application/json",
+					accept: "application/json, text/plain;q=0.5",
+				},
+			},
+		);
+		if (response.status < 200 || response.status >= 300) {
 			throw new Error(`Message Pusher returned HTTP ${response.status}`);
 		}
-		if (!response.body) throw new Error("Message Pusher returned no result");
-		const reader = response.body.getReader();
-		const chunks: Uint8Array[] = [];
-		let size = 0;
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				size += value.length;
-				if (size > 65536) throw new Error("Message Pusher response exceeds limit");
-				chunks.push(value);
-			}
-		} finally {
-			await reader.cancel().catch(() => {});
-		}
-		let result: { success?: unknown };
-		try {
-			result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-		} catch {
-			throw new Error("Message Pusher returned an invalid result");
-		}
-		if (result?.success !== true)
+		const result = response.data as { success?: unknown };
+		if (!result || typeof result !== "object" || result.success !== true) {
 			throw new Error("Message Pusher did not confirm delivery");
+		}
 	} catch (error) {
-		if (error instanceof Error && error.name === "AbortError") {
-			throw new Error("Message Pusher request timed out");
+		if (axios.isAxiosError(error)) {
+			if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
+				throw new Error("Message Pusher request timed out");
+			}
+			if (error.response) {
+				throw new Error(`Message Pusher returned HTTP ${error.response.status}`);
+			}
+			throw new Error("Message Pusher request failed");
 		}
 		throw error instanceof Error ? error : new Error("Message Pusher request failed");
-	} finally {
-		clearTimeout(timeout);
 	}
 }
 

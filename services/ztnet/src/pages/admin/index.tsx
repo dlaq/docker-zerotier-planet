@@ -34,7 +34,7 @@ const AdminSettings = ({ orgIds }) => {
 
 	const tabs: ITab[] = [
 		{
-			name: "System & Exposure / 系统与暴露面",
+			name: "暴露面",
 			value: "system-exposure",
 			component: <SystemExposure />,
 		},

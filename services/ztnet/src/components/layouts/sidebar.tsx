@@ -311,7 +311,7 @@ const Sidebar = (): JSX.Element => {
 									<span className="flex items-center justify-center text-lg text-gray-400">
 										⚙
 									</span>
-									<span className="ml-3">System &amp; Exposure / 系统与暴露面</span>
+									<span className="ml-3">暴露面</span>
 								</Link>
 							</li>
 							<li className="my-px">

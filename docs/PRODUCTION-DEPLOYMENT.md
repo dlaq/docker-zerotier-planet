@@ -932,7 +932,7 @@ Docker 的宿主机端口映射。为了不把 Docker Socket 暴露给 Web 容�
 - ZeroTier 对外 UDP 绑定；
 - relay 的启停、宿主机 TCP 端口和来源 CIDR。
 
-这是 Docker 的权限边界，不是文档遗漏。当前 1Panel 粘贴模式的“系统与暴露面”页会显示
+这是 Docker 的权限边界，不是文档遗漏。当前 1Panel 粘贴模式的“暴露面”页会显示
 Compose 中的实际监听配置，但在线校验、应用、证书生成和回滚按钮会明确标记为不可用；需要
 网页原子修改宿主机监听、证书文件、iptables
 和容器生命周期时，必须使用带受限宿主机配置代理的高级安装模式；该模式不属于“只给一份
@@ -949,8 +949,10 @@ v1.1.7 的 ZTNet 镜像内置 PostgreSQL 17 客户端，因此“包含数据库
 管理员登录 **Admin → Mail Settings / 邮件设置** 后，在“Message Pusher 推送渠道”中填写
 自建服务根地址（例如 `https://push.example.com`）、用户名、令牌和可选渠道并保存。令牌只以
 加密值写入 PostgreSQL，不从 `.env` 读取，也不会出现在 Compose 或 `docker inspect`；可与 SMTP
-同时启用，测试按钮会等待实际响应。[message-pusher 官方仓库](https://github.com/songquanpeng/message-pusher)
-说明了各渠道和 `/push/<用户名>` 接口格式。
+同时启用，测试按钮会入队并由后台 worker 等待实际响应，结果显示在投递记录中。[message-pusher 官方仓库](https://github.com/songquanpeng/message-pusher)
+说明了各渠道和 `/push/<用户名>` 接口格式。若生产机不能直连外网，可在 1Panel 环境变量中
+设置 `ZTPLANET_MESSAGE_PUSHER_PROXY`；ZTNet 会只为 Message Pusher 使用该显式正向代理，
+不会把代理凭据写入数据库。留空时使用直连。
 
 ## 十、旧生产机原机迁移
 
