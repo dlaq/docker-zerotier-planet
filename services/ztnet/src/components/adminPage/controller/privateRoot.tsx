@@ -22,7 +22,10 @@ const PrivateRoot = () => {
 	});
 	async function downloadPlanet() {
 		try {
-			const response = await fetch("/api/mkworld/config");
+			// Download the generated Planet itself.  The world-config endpoint is
+			// reserved for exporting the mkworld ZIP used to regenerate a Planet;
+			// using it here made the button download the wrong artifact for clients.
+			const response = await fetch("/api/planet");
 			if (!response.ok) {
 				throw new Error("Network response was not ok");
 			}
@@ -31,7 +34,7 @@ const PrivateRoot = () => {
 			const a = document.createElement("a");
 			a.style.display = "none";
 			a.href = url;
-			a.download = "ztnet-world.zip";
+			a.download = "planet.custom";
 			document.body.appendChild(a);
 			a.click();
 			window.URL.revokeObjectURL(url);
