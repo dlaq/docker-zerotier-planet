@@ -887,7 +887,6 @@ fn handle_client(
         &running,
         &destinations,
         session_id,
-        &state.telemetry,
     );
     running.store(false, Ordering::Release);
     let _ = response_thread.join();
@@ -903,7 +902,6 @@ fn relay_requests(
     running: &AtomicBool,
     destinations: &Mutex<HashMap<SocketAddr, u64>>,
     session_id: u64,
-    telemetry: &Arc<RelayTelemetry>,
 ) -> io::Result<()> {
     let mut local_rate = RateWindow::default();
     while running.load(Ordering::Acquire) {
@@ -985,7 +983,9 @@ fn relay_requests(
             // is recorded. A fast UDP reply must not race its allowlist entry.
             let mut credits = destinations.lock().unwrap_or_else(|e| e.into_inner());
             udp.send_to(payload, destination)?;
-            telemetry.observe(session_id, RelayDirection::ToUdp, payload, now_millis());
+            state
+                .telemetry
+                .observe(session_id, RelayDirection::ToUdp, payload, now_millis());
             let credit = credits.entry(destination).or_default();
             let additional = (payload.len() as u64).saturating_mul(4).max(512);
             *credit = credit.saturating_add(additional).min(MAX_RESPONSE_CREDIT);
