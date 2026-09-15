@@ -92,6 +92,27 @@ identity 为 `f198c93138`，旧网络 `f198c93138b38cae`（GHMCH）及其 17 个
 上述是单台测试 VPS 的迁移、应用和容器验收，不等同于两台客户端在不同运营商/NAT 下的
 `DIRECT`、`RELAY`、`TUNNELED` 全量网络矩阵；该矩阵仍应在生产网络中执行。
 
+## 2026-09-16 v1.1.16 发布复核
+
+v1.1.16 在第二轮源码门禁中修复了一个兼容性回归：旧成员同步返回空 peer 列表时不再把
+`connectionType` 和 `latencyMs` 写成空值。GitHub Actions 运行
+[`34997973670`](https://github.com/dlaq/docker-zerotier-planet/actions/runs/34997973670)
+已通过源码门禁、原生 AMD64/ARM64 构建、集成测试、Trivy 扫描、SBOM 和多架构清单合并。
+五个 Docker Hub 标签均实际包含 `linux/amd64` 与 `linux/arm64`；1Panel Compose 已固定到
+下列清单摘要：
+
+| 正式标签 | 多架构清单摘要 | 平台 |
+|---|---|---|
+| `zerotier-v1.1.16` | `sha256:e4ac3beab9033212fab4a4b3e816eae5a120f43eaf4c343551d64cc3b89d7a8d` | amd64、arm64 |
+| `ztnet-v1.1.16` | `sha256:f418bb44d4991e83df72182d3c1b9b18cad37b3514efaddba5507c3700d27055` | amd64、arm64 |
+| `relay-v1.1.16` | `sha256:a0a99f29e7b54934a6bc142ef5cb3ca6ff705c52aa86b32d3db6c1cd744b054b` | amd64、arm64 |
+| `postgres-v1.1.16` | `sha256:6247ea19f037f35bc44602a361a5ec8e283a5e9350aa97d2358d358b59d83740` | amd64、arm64 |
+| `gateway-v1.1.16` | `sha256:044398bbc424977fa487ffb8413216b8b5bef3f7b8a2108c58ddbb743f58b084` | amd64、arm64 |
+
+本次功能增加了 Controller/relay 的 `wire_observed` 中继遥测和主备脚本；它用于运维观测，
+不是应用层计费凭证。测试 VPS 的保数据升级和中继转发矩阵仍需在本次发布后独立记录，不能
+用 CI 清单代替现场验收。
+
 ## 历史发布审计
 
 审计日期：2026-09-05。范围：本次交付源码、五个 Linux/amd64 与 Linux/arm64 生产

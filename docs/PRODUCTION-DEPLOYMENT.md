@@ -123,7 +123,7 @@ name: ztplanet
 
 services:
   postgres:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.8@sha256:d16f7c90a0ab029fcbc65079f53f259db40bd80096152233d7015cb2c42d5948
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.16@sha256:6247ea19f037f35bc44602a361a5ec8e283a5e9350aa97d2358d358b59d83740
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -172,7 +172,7 @@ services:
   # 在 ZeroTier 首次启动前生成受控的 local.conf。该文件允许 ZTNet 容器
   # (172.31.255.3) 访问 Controller API；不写入 token，也不覆盖其它设置。
   zerotier-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.8@sha256:634672ec8ef4ae0f35361db76c4e5f1c2047d9048a02eb37f26f9af063af60ab
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.16@sha256:f418bb44d4991e83df72182d3c1b9b18cad37b3514efaddba5507c3700d27055
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -253,7 +253,7 @@ services:
     cpus: 0.25
 
   zerotier:
-    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.8@sha256:b6a9091f40f0135f1c4597e7a479988da1cabdc1c27b864c9868f66f6dbc7a62
+    image: docker.io/dlaq/zerotier-planet-test:zerotier-v1.1.16@sha256:e4ac3beab9033212fab4a4b3e816eae5a120f43eaf4c343551d64cc3b89d7a8d
     pull_policy: always
     restart: unless-stopped
     volumes:
@@ -294,7 +294,7 @@ services:
       start_period: 20s
 
   ztnet-init:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.8@sha256:634672ec8ef4ae0f35361db76c4e5f1c2047d9048a02eb37f26f9af063af60ab
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.16@sha256:f418bb44d4991e83df72182d3c1b9b18cad37b3514efaddba5507c3700d27055
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -341,7 +341,7 @@ services:
     cpus: 0.25
 
   ztnet:
-    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.8@sha256:634672ec8ef4ae0f35361db76c4e5f1c2047d9048a02eb37f26f9af063af60ab
+    image: docker.io/dlaq/zerotier-planet-test:ztnet-v1.1.16@sha256:f418bb44d4991e83df72182d3c1b9b18cad37b3514efaddba5507c3700d27055
     pull_policy: always
     restart: unless-stopped
     user: "1001:1001"
@@ -430,7 +430,7 @@ services:
       start_period: 90s
 
   gateway-init:
-    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.8@sha256:d16f7c90a0ab029fcbc65079f53f259db40bd80096152233d7015cb2c42d5948
+    image: docker.io/dlaq/zerotier-planet-test:postgres-v1.1.16@sha256:6247ea19f037f35bc44602a361a5ec8e283a5e9350aa97d2358d358b59d83740
     pull_policy: always
     restart: "no"
     user: "0:0"
@@ -531,7 +531,7 @@ services:
       - CHOWN
 
   gateway:
-    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.8@sha256:ef6bd071589867553b08dd94959297a94cf7c669a81e21712013c45e6a8696b3
+    image: docker.io/dlaq/zerotier-planet-test:gateway-v1.1.16@sha256:044398bbc424977fa487ffb8413216b8b5bef3f7b8a2108c58ddbb743f58b084
     pull_policy: always
     restart: unless-stopped
     user: "1002:1002"
@@ -576,7 +576,7 @@ services:
       start_period: 10s
 
   relay:
-    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.8@sha256:b7ecaf8bf8c6a0374344c3ab7a2bc066bf6a663fb94635664c429a9d07502b7e
+    image: docker.io/dlaq/zerotier-planet-test:relay-v1.1.16@sha256:a0a99f29e7b54934a6bc142ef5cb3ca6ff705c52aa86b32d3db6c1cd744b054b
     pull_policy: always
     profiles: ["relay"]
     restart: unless-stopped
@@ -654,7 +654,7 @@ ZTPLANET_AUTH_SECRET=第二条随机值
 
 1Panel 不会因为 GitHub 仓库更新而自动改写已经保存的 Compose；仅点击“启动”也可能继续
 复用本机旧镜像。先从本仓库当前 `master` 重新复制完整 Compose（或在 1Panel 编辑器中
-整段替换），确认 `image:` 行全部为 `*-v1.1.8`（发布校验后固定为对应 digest），不是旧的 `v1.1.0` 或 `latest`。
+整段替换），确认 `image:` 行全部为 `*-v1.1.16`（发布校验后固定为对应 digest），不是旧的 `v1.1.0` 或 `latest`。
 
 在 1Panel 主机终端执行下面命令，`compose_dir` 替换为 1Panel 详情中显示的实际目录。命令
 只删除容器和网络，不删除 `./data/`，也不要添加 `-v`：
@@ -1220,7 +1220,7 @@ sudo cat "$restore_dir/ztnet.pgdump" | sudo docker exec -i "$postgres_container"
 恢复前必须保证目标 `./data/` 目录可被替换，且不能同时运行新旧两个 Controller。升级时先
 完成上述停机备份，再复制新版本交付文档中的整个 Compose 代码块，保持原来的两个秘密值
 不变，然后在 1Panel 执行“拉取并重建”。不要使用 `latest`，不要自行删除镜像摘要，也不要
-只升级五个组件中的一部分。本次升级目标为 `v1.1.8`，须核对其双架构安全门禁及发布记录；仅当收到
+只升级五个组件中的一部分。本次升级目标为 `v1.1.16`，须核对其双架构安全门禁及发布记录；仅当收到
 新版完整文档并核对版本说明后才替换。
 
 验收至少包括：
