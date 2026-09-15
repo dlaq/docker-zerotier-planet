@@ -115,8 +115,15 @@ export function observeMember(
 			: null;
 		member.connectionType = connectionType;
 		member.latencyMs = latencyMs;
-		if (db.connectionType !== connectionType) data.connectionType = connectionType;
-		if (db.latencyMs !== latencyMs) data.latencyMs = latencyMs;
+		// A legacy controller without the optional status endpoint can still
+		// return a successful but empty peer list. Do not turn every warm-cache
+		// read into an UPDATE that merely backfills `unknown`/NULL; persist a
+		// metric only when the network-scoped status is known or the peer API
+		// supplied an actual observation.
+		if (known || peerHasData) {
+			if (db.connectionType !== connectionType) data.connectionType = connectionType;
+			if (db.latencyMs !== latencyMs) data.latencyMs = latencyMs;
+		}
 	} else {
 		// Keep an unavailable/partial observation visibly conservative. The
 		// previous persisted latency is retained for auditability, but the path is
