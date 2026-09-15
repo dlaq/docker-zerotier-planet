@@ -166,6 +166,8 @@ export interface ZTControllerGetPeer {
 	versionMajor: number;
 	versionMinor: number;
 	versionRev: number;
+	/** True when this peer is served through the Controller's TCP fallback tunnel. */
+	tunneled?: boolean;
 }
 
 export interface Paths {

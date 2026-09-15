@@ -4,7 +4,13 @@ import type { MemberStatusSnapshot } from "~/types/memberObservation";
 import type { MemberEntity, Peers } from "~/types/local/member";
 import type { UserContext } from "~/types/ctx";
 import * as ztController from "~/utils/ztApi";
-import { ConnectionStatus, determineConnectionStatus } from "~/utils/memberConnection";
+import {
+	CONNECTION_TYPES,
+	ConnectionStatus,
+	determineConnectionStatus,
+	determineConnectionType,
+	normalizePeerLatency,
+} from "~/utils/memberConnection";
 
 const time = z.number().int().min(0).max(8640000000000000);
 const schema = z
@@ -91,6 +97,33 @@ export function observeMember(
 			: ConnectionStatus.Unknown;
 	member.online = known ? source.online : undefined;
 	const data: Partial<network_members> = {};
+	// The peer endpoint is a live Controller -> member observation. Persist its
+	// transport/latency only when the observation source is usable; a controller
+	// outage or a still-warming snapshot must not overwrite the last good cache.
+	const canObservePeerMetrics =
+		live.peersAvailable && (known || (live.statusAvailable && !live.snapshot));
+	if (canObservePeerMetrics) {
+		const connectionType = determineConnectionType(
+			member,
+			known ? source.online : undefined,
+			live.peersAvailable,
+		);
+		const peerHasData =
+			!!member.peers && Object.keys(member.peers as Record<string, unknown>).length > 0;
+		const latencyMs = peerHasData
+			? normalizePeerLatency((member.peers as Partial<Peers>).latency)
+			: null;
+		member.connectionType = connectionType;
+		member.latencyMs = latencyMs;
+		if (db.connectionType !== connectionType) data.connectionType = connectionType;
+		if (db.latencyMs !== latencyMs) data.latencyMs = latencyMs;
+	} else {
+		// Keep an unavailable/partial observation visibly conservative. The
+		// previous persisted latency is retained for auditability, but the path is
+		// marked unknown so a stale direct/relay label is never presented as live.
+		member.connectionType = CONNECTION_TYPES.Unknown;
+		member.latencyMs = db.latencyMs;
+	}
 	if (
 		member.conStatus === ConnectionStatus.Unknown &&
 		db.connectionPendingStatus != null

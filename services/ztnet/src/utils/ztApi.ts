@@ -26,6 +26,7 @@ import { type NetworkAndMemberResponse } from "~/types/network";
 import { UserContext } from "~/types/ctx";
 import os from "os";
 import { prisma } from "~/server/db";
+import type { RelayTelemetry } from "~/types/relayTelemetry";
 
 export let ZT_FOLDER: string;
 
@@ -750,7 +751,7 @@ export const peers = async (ctx: UserContext): Promise<ZTControllerGetPeer[]> =>
 			timeout: 10000,
 		});
 		return response.data as ZTControllerGetPeer[];
-	} catch (error) {
+	} catch (_error) {
 		throw new Error("Controller peers unavailable");
 	}
 };
@@ -789,5 +790,25 @@ export const get_controller_metrics = async ({ ctx }: Ictx) => {
 	} catch (error) {
 		const message = "An error occurred while getting controller metrics";
 		throw new APIError(message, error as AxiosError);
+	}
+};
+
+/** Authenticated wire-level relay observations from the local ZeroTier node. */
+export const relay_telemetry = async (ctx: UserContext): Promise<RelayTelemetry> => {
+	const { headers, localControllerUrl } = await getOptions(ctx, false);
+	try {
+		const response = await axios.get<RelayTelemetry>(
+			`${localControllerUrl}/relay/telemetry`,
+			{ headers, timeout: 10000 },
+		);
+		return response.data;
+	} catch (error) {
+		if (axios.isAxiosError(error) && error.response?.status === 404) {
+			throw new APIError("Relay telemetry is not available on this Controller", error);
+		}
+		throw new APIError(
+			"An error occurred while getting relay telemetry",
+			error as AxiosError,
+		);
 	}
 };

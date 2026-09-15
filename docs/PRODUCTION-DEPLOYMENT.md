@@ -16,6 +16,7 @@
 - PostgreSQL、ZeroTier Controller/Planet、ZTNet 和自签名 HTTPS 管理入口；
 - `./data/` 宿主机目录 bind 挂载、内部网络、健康检查、只读文件系统、能力限制和资源限制；
 - 默认关闭的 TCP fallback relay；
+- 可选的服务端中继会话遥测与按节点流量统计；
 - 内嵌 Caddy 配置，不依赖宿主机文件。
 
 部署者只需要自行生成两个秘密值。秘密值不能由发布者预先写进公共 Compose，否则所有
@@ -394,6 +395,9 @@ services:
       # Optional explicit HTTP(S) forward proxy for Message Pusher only. This
       # is needed on VPS networks that block direct outbound TCP/443.
       ZTPLANET_MESSAGE_PUSHER_PROXY: "${ZTPLANET_MESSAGE_PUSHER_PROXY:-}"
+      # Internal-only relay observer endpoint; no host port is published.
+      ZT_RELAY_TELEMETRY_URLS: "${ZT_RELAY_TELEMETRY_URLS:-http://relay:9090/relay/telemetry}"
+      ZT_RELAY_TELEMETRY_TOKEN: "${ZT_RELAY_TELEMETRY_TOKEN:-}"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
       - ./data/zerotier:/run/zerotier-controller:ro
@@ -578,8 +582,9 @@ services:
     restart: unless-stopped
     environment:
       RELAY_LISTEN: 0.0.0.0:4443
-      # 仅绑定 relay 专用网络地址，供健康检查和配置代理读取；不要映射到宿主机。
-      RELAY_METRICS_LISTEN: "${RELAY_METRICS_LISTEN:-172.31.254.2:9090}"
+      # 仅在 Docker 内部网络提供指标/遥测；不要映射到宿主机。
+      RELAY_METRICS_LISTEN: "${RELAY_METRICS_LISTEN:-0.0.0.0:9090}"
+      RELAY_TELEMETRY_TOKEN: "${ZT_RELAY_TELEMETRY_TOKEN:-}"
       RELAY_ALLOWED_CIDRS: ${RELAY_ALLOWED_CIDRS:-}
       RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-128}
       RELAY_MAX_CONNECTIONS_PER_IP: ${RELAY_MAX_CONNECTIONS_PER_IP:-4}
@@ -595,6 +600,7 @@ services:
     ports:
       - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_PUBLIC_PORT:-4443}:4443/tcp"
     networks:
+      app-network:
       relay-egress:
         ipv4_address: 172.31.254.2
     read_only: true
@@ -912,6 +918,18 @@ RELAY_ALLOWED_CIDRS=可信公网地址/32
 
 `RELAY_ALLOWED_CIDRS` 留空代表允许任意来源。TCP fallback 协议外层不是真 TLS，也没有
 协议级客户端认证，公网开放时应优先设置来源 CIDR、较低连接上限和云防火墙限速。
+
+### 中继会话遥测
+
+启用 relay 时，Compose 默认在 Docker 内部的 `relay:9090` 提供遥测，ZTNet 每 15 秒采集
+并在网络成员表增加中继流量列。可在 `.env` 中设置 `ZT_RELAY_TELEMETRY_TOKEN`，同时
+保护 relay 的 JSON 端点；不要把 9090 映射到宿主机或公网。成员表中的字节数是成功转发的
+外层数据包统计，标签为 `wire_observed`，不能当作应用层认证或计费凭证。返回的会话、流、
+传输类型和保留窗口说明见 [`docs/RELAY-TELEMETRY.md`](RELAY-TELEMETRY.md)。
+
+主备部署可在 `ZT_RELAY_TELEMETRY_URLS` 中填写两个内部 relay 地址（逗号或空格分隔），
+任一备机暂时不可达不会让成员页失败；主备 Controller 的身份、Planet、数据同步和切换
+顺序见 [`docs/HA-FAILOVER.md`](HA-FAILOVER.md)。
 
 服务端启动 relay 不会自动修改客户端。客户端仍需配置：
 

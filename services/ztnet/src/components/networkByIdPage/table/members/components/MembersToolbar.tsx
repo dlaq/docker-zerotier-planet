@@ -9,6 +9,8 @@ interface Props {
 	onMemberFilterChange: (value: MemberFilter) => void;
 	showExtendedView: boolean;
 	onToggleExtendedView: () => void;
+	relayWindow: "1h" | "24h" | "7d" | "30d" | "all";
+	onRelayWindowChange: (value: Props["relayWindow"]) => void;
 }
 
 /**
@@ -22,6 +24,8 @@ export const MembersToolbar = ({
 	onMemberFilterChange,
 	showExtendedView,
 	onToggleExtendedView,
+	relayWindow,
+	onRelayWindowChange,
 }: Props) => {
 	const t = useTranslations("networkById");
 	const toggleLabel = showExtendedView
@@ -138,6 +142,23 @@ export const MembersToolbar = ({
 						{t("networkMembersTable.filters.options.unknown_connection")}
 					</option>
 				</optgroup>
+			</select>
+			<select
+				value={relayWindow}
+				onChange={(event) => {
+					const value = event.target.value;
+					if (["1h", "24h", "7d", "30d", "all"].includes(value))
+						onRelayWindowChange(value as Props["relayWindow"]);
+				}}
+				className="select select-sm min-w-[8rem] border-base-content/30"
+				aria-label={t("networkMembersTable.relayWindow.label")}
+				title={t("networkMembersTable.relayWindow.help")}
+			>
+				<option value="1h">{t("networkMembersTable.relayWindow.options.1h")}</option>
+				<option value="24h">{t("networkMembersTable.relayWindow.options.24h")}</option>
+				<option value="7d">{t("networkMembersTable.relayWindow.options.7d")}</option>
+				<option value="30d">{t("networkMembersTable.relayWindow.options.30d")}</option>
+				<option value="all">{t("networkMembersTable.relayWindow.options.all")}</option>
 			</select>
 			<button
 				onClick={onToggleExtendedView}

@@ -7,6 +7,8 @@ ZTNet 的网络管理能力，并新增隔离的宿主机配置代理、HTTPS �
 > 面向个人、非商业自建。部署前请确认 ZeroTier 和 ZTNet 当前许可证符合你的用途。
 
 节点状态、最近上线时间和可编辑事件推送说明见 [NODE-NOTIFICATIONS.md](docs/NODE-NOTIFICATIONS.md)。
+中继流量字段、会话遥测接口和置信边界见 [RELAY-TELEMETRY.md](docs/RELAY-TELEMETRY.md)；
+两台 VPS 的 active-passive 切换见 [HA-FAILOVER.md](docs/HA-FAILOVER.md)。
 
 ## 固定组件
 
@@ -105,7 +107,8 @@ Capabilities、组织、用户、API Token、Webhook、成员路径和版本。
 新增系统页面管理多个监听 IP/端口/TLS/CIDR、虚拟网访问、UDP 主辅端口、UPnP/NAT-PMP、
 Controller 暴露方式、relay 服务端与客户端策略和全部限额；还能查看实际监听、配置漂移、
 relay 指标和审计，生成/安装证书、轮换 Controller Token、导出客户端 `local.conf`，以及
-预览、原子应用和回滚配置。
+预览、原子应用和回滚配置；成员页还可查看服务端观测的 UDP/TCP relay 字节数、会话和
+保留窗口。
 
 ## UDP RELAY 与 TCP TUNNELED
 

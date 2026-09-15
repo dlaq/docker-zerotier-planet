@@ -95,7 +95,9 @@
 			},
 			"status": "Statut",
 			"lastOnlineAt": "Last online",
-			"lastSeen": "Last communication"
+			"lastSeen": "Last communication",
+			"latency": "Latency",
+			"relayTraffic": "Relay traffic"
 		},
 		"search": {
 			"networkSearchPlaceholder": "Rechercher un réseau",
@@ -427,6 +429,17 @@
 			},
 			"search": {
 				"placeholder": "Rechercher n'importe quoi..."
+			},
+			"relayWindow": {
+				"label": "Relay traffic window",
+				"help": "Select the relay traffic window",
+				"options": {
+					"1h": "Last hour",
+					"24h": "Last 24 hours",
+					"7d": "Last 7 days",
+					"30d": "Last 30 days",
+					"all": "All retained"
+				}
 			}
 		},
 		"deletedNetworkMembersTable": {
@@ -1308,12 +1321,21 @@
 		"lastSeenHelp": "Last authenticated network configuration request received by the Controller. Time is shown in your browser time zone.",
 		"lastOnlineHelp": "Start of the most recent observed online period, recorded since monitoring began. Time is shown in your browser time zone.",
 		"pathHelp": "Controller → this node. This does not establish the path between two clients; client TCP fallback cannot be inferred here.",
+		"latencyHelp": "Latency reported by the Controller peer API, in milliseconds.",
+		"latencyUnavailable": "Latency unavailable",
+		"relayTrafficHelp": "Relay traffic is observed on the server wire; direct traffic is not included.",
+		"relayIn": "In",
+		"relayOut": "Out",
+		"lastRelayed": "Last relay",
+		"relayTrafficUnavailable": "No relay traffic",
 		"unknownHelp": "No reliable current observation. A Controller restart or collection failure does not mean the node is offline.",
 		"assignmentHelp": "Controller assignment state. The client may still be applying its configuration; client-side errors require client telemetry.",
 		"unknown": "Unknown",
 		"online": "Online",
 		"offline": "Offline",
 		"relayed": "Relayed",
+		"udpRelay": "UDP relay",
+		"tcpRelay": "TCP relay",
 		"directLan": "Direct (LAN)",
 		"directWan": "Direct (WAN)",
 		"controller": "Controller",

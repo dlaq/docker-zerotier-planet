@@ -15,6 +15,8 @@ import { EditableDescriptionCell } from "./cells/EditableDescriptionCell";
 import { IpAssignmentsCell } from "./cells/IpAssignmentsCell";
 import { PhysicalAddressCell } from "./cells/PhysicalAddressCell";
 import { ConnectionStatusCell } from "./cells/ConnectionStatusCell";
+import { LatencyCell } from "./cells/LatencyCell";
+import { RelayTrafficCell } from "./cells/RelayTrafficCell";
 import { MemberTimeCell } from "./cells/MemberTimeCell";
 import { ActionsCell } from "./cells/ActionsCell";
 
@@ -142,7 +144,7 @@ export const useMemberColumns = ({
 				id: "description",
 				...COLUMN_SIZING.description,
 				...leftAligned,
-				enableSorting: false,
+				enableSorting: true,
 				cell: (ctx) => (
 					<EditableDescriptionCell
 						ctx={ctx}
@@ -186,14 +188,30 @@ export const useMemberColumns = ({
 					<PhysicalAddressCell original={original} central={central} />
 				),
 			}),
-			columnHelper.accessor("conStatus", {
+			columnHelper.accessor("connectionType", {
 				header: () => <span>{c("header.conStatus.header")}</span>,
-				id: "conStatus",
+				id: "connectionType",
 				...COLUMN_SIZING.conStatus,
-				enableSorting: false,
+				enableSorting: true,
 				cell: ({ row: { original } }) => (
 					<ConnectionStatusCell original={original} central={central} />
 				),
+			}),
+			columnHelper.accessor("latencyMs", {
+				header: () => <span>{c("header.latency")}</span>,
+				id: "latencyMs",
+				minSize: 90,
+				maxSize: 130,
+				enableSorting: true,
+				cell: ({ row: { original } }) => <LatencyCell original={original} />,
+			}),
+			columnHelper.accessor("relayBytesTotal", {
+				header: () => <span>{c("header.relayTraffic")}</span>,
+				id: "relayBytesTotal",
+				minSize: 110,
+				maxSize: 170,
+				enableSorting: true,
+				cell: ({ row: { original } }) => <RelayTrafficCell original={original} />,
 			}),
 			...(["lastOnlineAt", "lastSeen"] as const).map((field) =>
 				columnHelper.accessor(field, {
@@ -201,7 +219,7 @@ export const useMemberColumns = ({
 					header: () => <span>{c(`header.${field}`)}</span>,
 					minSize: 150,
 					maxSize: 200,
-					enableSorting: !central,
+					enableSorting: true,
 					cell: ({ row: { original } }) => (
 						<MemberTimeCell original={original} field={field} />
 					),

@@ -19,7 +19,11 @@ RUN git init . \
     && test "$(sed -n 's/^#define ZEROTIER_ONE_VERSION_MAJOR \([0-9]*\)$/\1/p' version.h).$(sed -n 's/^#define ZEROTIER_ONE_VERSION_MINOR \([0-9]*\)$/\1/p' version.h).$(sed -n 's/^#define ZEROTIER_ONE_VERSION_REVISION \([0-9]*\)$/\1/p' version.h)" = "${ZEROTIER_VERSION}"
 
 COPY services/zerotier/member-status.patch /build/member-status.patch
-RUN git apply --check /build/member-status.patch && git apply /build/member-status.patch
+COPY services/zerotier/relay-telemetry.patch /build/relay-telemetry.patch
+RUN git apply --check /build/member-status.patch \
+    && git apply /build/member-status.patch \
+    && git apply --check /build/relay-telemetry.patch \
+    && git apply /build/relay-telemetry.patch
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \

@@ -40,15 +40,25 @@ interface IProp {
 	organizationId?: string;
 }
 
-// Columns the server can sort on (others are computed/array and disable sorting).
+// All data columns are server-sortable. The actions column has no meaningful
+// order and remains the sole non-sortable column.
 const SERVER_SORTABLE = new Set([
 	"id",
 	"name",
+	"description",
 	"authorized",
+	"online",
 	"physicalAddress",
 	"ipAssignments",
+	"connectionType",
+	"latencyMs",
+	"relayBytesTotal",
 	"lastSeen",
 	"lastOnlineAt",
+	"lastOfflineAt",
+	"creationTime",
+	"notations",
+	"conStatus", // legacy persisted column id; the API maps it to connectionType.
 ]);
 
 export const NetworkMembersTable = ({ nwid, central = false, organizationId }: IProp) => {
@@ -62,6 +72,9 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 	const refetchInterval = central || socketConnected ? 60000 : 20000;
 	const [globalFilter, setGlobalFilter] = useState("");
 	const [memberFilter, setMemberFilter] = useState<MemberFilter>("all");
+	const [relayWindow, setRelayWindow] = useState<"1h" | "24h" | "7d" | "30d" | "all">(
+		"24h",
+	);
 	const {
 		sorting,
 		setSorting,
@@ -117,6 +130,7 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 			pageSize: safePageSize,
 			search: globalFilter || undefined,
 			memberFilter,
+			relayWindow,
 			// biome-ignore lint/suspicious/noExplicitAny: narrowed to the server enum above
 			sortBy: sortBy as any,
 			sortDir,
@@ -209,6 +223,8 @@ export const NetworkMembersTable = ({ nwid, central = false, organizationId }: I
 				onMemberFilterChange={setMemberFilter}
 				showExtendedView={showExtendedView}
 				onToggleExtendedView={() => setShowExtendedView(!showExtendedView)}
+				relayWindow={relayWindow}
+				onRelayWindowChange={setRelayWindow}
 			/>
 			<div className="overflow-x-auto">
 				<table

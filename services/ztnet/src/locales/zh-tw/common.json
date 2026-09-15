@@ -95,7 +95,9 @@
 			},
 			"status": "狀態",
 			"lastOnlineAt": "Last online",
-			"lastSeen": "Last communication"
+			"lastSeen": "Last communication",
+			"latency": "Latency",
+			"relayTraffic": "中继流量"
 		},
 		"search": {
 			"networkSearchPlaceholder": "搜尋網路",
@@ -427,6 +429,17 @@
 			},
 			"search": {
 				"placeholder": "搜尋任何東西..."
+			},
+			"relayWindow": {
+				"label": "中繼流量窗口",
+				"help": "選擇統計窗口",
+				"options": {
+					"1h": "最近 1 小時",
+					"24h": "最近 24 小時",
+					"7d": "最近 7 天",
+					"30d": "最近 30 天",
+					"all": "全部"
+				}
 			}
 		},
 		"deletedNetworkMembersTable": {
@@ -1308,12 +1321,21 @@
 		"lastSeenHelp": "Last authenticated network configuration request received by the Controller. Time is shown in your browser time zone.",
 		"lastOnlineHelp": "Start of the most recent observed online period, recorded since monitoring began. Time is shown in your browser time zone.",
 		"pathHelp": "Controller → this node. This does not establish the path between two clients; client TCP fallback cannot be inferred here.",
+		"latencyHelp": "Latency reported by the Controller peer API, in milliseconds.",
+		"latencyUnavailable": "Latency unavailable",
+		"relayTrafficHelp": "中繼流量為服務端線路觀測值；直連流量不計入。",
+		"relayIn": "入站",
+		"relayOut": "出站",
+		"lastRelayed": "最近中繼",
+		"relayTrafficUnavailable": "暫無中繼流量",
 		"unknownHelp": "No reliable current observation. A Controller restart or collection failure does not mean the node is offline.",
 		"assignmentHelp": "Controller assignment state. The client may still be applying its configuration; client-side errors require client telemetry.",
 		"unknown": "Unknown",
 		"online": "Online",
 		"offline": "Offline",
 		"relayed": "Relayed",
+		"udpRelay": "UDP relay",
+		"tcpRelay": "TCP relay",
 		"directLan": "Direct (LAN)",
 		"directWan": "Direct (WAN)",
 		"controller": "Controller",

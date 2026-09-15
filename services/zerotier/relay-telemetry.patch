@@ -1,0 +1,334 @@
+diff --git a/node/Metrics.cpp b/node/Metrics.cpp
+index dd49d86b..c4995356 100644
+--- a/node/Metrics.cpp
++++ b/node/Metrics.cpp
+@@ -7,10 +7,110 @@
+  */
+ 
+ // clang-format off
++#include "Metrics.hpp"
+ #include <prometheus/simpleapi.h>
+ #include <prometheus/histogram.h>
+ // clang-format on
+ 
++#include <algorithm>
++#include <chrono>
++#include <limits>
++#include <map>
++#include <cstdio>
++#include <mutex>
++#include <nlohmann/json.hpp>
++#include <string>
++#include <utility>
++#include <iterator>
++#include <vector>
++
++namespace {
++constexpr int64_t RELAY_FLOW_ACTIVE_MS = 120000;
++constexpr int64_t RELAY_FLOW_RETENTION_MS = 900000;
++constexpr size_t RELAY_FLOW_LIMIT = 8192;
++
++struct RelayFlowKey {
++	uint64_t source;
++	uint64_t destination;
++	ZeroTier::Metrics::RelayTransport transport;
++
++	bool operator<(const RelayFlowKey& other) const
++	{
++		if (source != other.source)
++			return source < other.source;
++		if (destination != other.destination)
++			return destination < other.destination;
++		return static_cast<unsigned int>(transport) < static_cast<unsigned int>(other.transport);
++	}
++};
++
++struct RelayFlowValue {
++	uint64_t packets = 0;
++	uint64_t bytes = 0;
++	int64_t firstSeen = 0;
++	int64_t lastSeen = 0;
++};
++
++struct RelayClientValue {
++	uint64_t packetsIn = 0;
++	uint64_t packetsOut = 0;
++	uint64_t bytesIn = 0;
++	uint64_t bytesOut = 0;
++	int64_t lastRelayedAt = 0;
++};
++
++std::mutex relayTelemetryMutex;
++std::map<RelayFlowKey, RelayFlowValue> relayFlows;
++uint64_t relayTelemetryDroppedFlows = 0;
++const int64_t relayTelemetryBootTime = []() {
++	return std::chrono::duration_cast<std::chrono::milliseconds>(
++			std::chrono::system_clock::now().time_since_epoch())
++			.count();
++}();
++
++uint64_t addSaturating(uint64_t left, uint64_t right)
++{
++	if (std::numeric_limits<uint64_t>::max() - left < right)
++		return std::numeric_limits<uint64_t>::max();
++	return left + right;
++}
++
++std::string relayNodeId(uint64_t address)
++{
++	char buf[32];
++	std::snprintf(buf, sizeof(buf), "%010llx", static_cast<unsigned long long>(address));
++	return std::string(buf);
++}
++
++const char* relayTransportName(ZeroTier::Metrics::RelayTransport transport)
++{
++	return transport == ZeroTier::Metrics::RelayTransport::TCP ? "tcp_relay" : "udp_relay";
++}
++
++void pruneRelayFlows(int64_t now)
++{
++	for (auto it = relayFlows.begin(); it != relayFlows.end();) {
++		if ((it->second.lastSeen > 0) && ((now - it->second.lastSeen) > RELAY_FLOW_RETENTION_MS))
++			it = relayFlows.erase(it);
++		else
++			++it;
++	}
++}
++
++void evictOldestRelayFlow()
++{
++	if (relayFlows.empty())
++		return;
++	auto oldest = relayFlows.begin();
++	for (auto it = std::next(relayFlows.begin()); it != relayFlows.end(); ++it) {
++		if (it->second.lastSeen < oldest->second.lastSeen)
++			oldest = it;
++	}
++	relayFlows.erase(oldest);
++	++relayTelemetryDroppedFlows;
++}
++} // namespace
++
+ namespace prometheus {
+ namespace simpleapi {
+ std::shared_ptr<Registry> registry_ptr = std::make_shared<Registry>();
+@@ -21,6 +121,83 @@ SaveToFile saver;
+ 
+ namespace ZeroTier {
+ namespace Metrics {
++
++void recordRelayForward(uint64_t source, uint64_t destination, RelayTransport transport, unsigned int bytes, int64_t now)
++{
++	if (!source || !destination || source == destination || !bytes)
++		return;
++	std::lock_guard<std::mutex> lock(relayTelemetryMutex);
++	pruneRelayFlows(now);
++	const RelayFlowKey key { source, destination, transport };
++	auto it = relayFlows.find(key);
++	if (it == relayFlows.end()) {
++		if (relayFlows.size() >= RELAY_FLOW_LIMIT)
++			evictOldestRelayFlow();
++		it = relayFlows.emplace(key, RelayFlowValue {}).first;
++		it->second.firstSeen = now;
++	}
++	it->second.packets = addSaturating(it->second.packets, 1);
++	it->second.bytes = addSaturating(it->second.bytes, bytes);
++	it->second.lastSeen = now;
++}
++
++std::string relayTelemetryJson(uint64_t observerId, int64_t now)
++{
++	std::lock_guard<std::mutex> lock(relayTelemetryMutex);
++	pruneRelayFlows(now);
++
++	using json = nlohmann::json;
++	json out = json::object();
++	out["version"] = 1;
++	out["observerId"] = relayNodeId(observerId);
++	out["bootId"] = std::to_string(relayTelemetryBootTime);
++	out["clock"] = now;
++	out["confidence"] = "wire_observed";
++	out["networkId"] = nullptr;
++	out["transport"] = "controller_udp";
++	out["flows"] = json::array();
++	out["clients"] = json::array();
++	out["sessions"] = json::array();
++	out["unattributed"] = json { { "packets", "0" }, { "bytes", "0" } };
++
++	std::map<uint64_t, RelayClientValue> clients;
++	for (const auto& [key, value] : relayFlows) {
++		json flow = json::object();
++		flow["sourceNodeId"] = relayNodeId(key.source);
++		flow["destinationNodeId"] = relayNodeId(key.destination);
++		flow["transport"] = relayTransportName(key.transport);
++		flow["packets"] = std::to_string(value.packets);
++		flow["bytes"] = std::to_string(value.bytes);
++		flow["firstSeen"] = value.firstSeen;
++		flow["lastSeen"] = value.lastSeen;
++		flow["active"] = (value.lastSeen > 0) && ((now - value.lastSeen) <= RELAY_FLOW_ACTIVE_MS);
++		out["flows"].push_back(std::move(flow));
++
++		RelayClientValue& source = clients[key.source];
++		source.packetsOut = addSaturating(source.packetsOut, value.packets);
++		source.bytesOut = addSaturating(source.bytesOut, value.bytes);
++		source.lastRelayedAt = std::max(source.lastRelayedAt, value.lastSeen);
++		RelayClientValue& destination = clients[key.destination];
++		destination.packetsIn = addSaturating(destination.packetsIn, value.packets);
++		destination.bytesIn = addSaturating(destination.bytesIn, value.bytes);
++		destination.lastRelayedAt = std::max(destination.lastRelayedAt, value.lastSeen);
++	}
++
++	for (const auto& [nodeId, value] : clients) {
++		json client = json::object();
++		client["nodeId"] = relayNodeId(nodeId);
++		client["packetsIn"] = std::to_string(value.packetsIn);
++		client["packetsOut"] = std::to_string(value.packetsOut);
++		client["bytesIn"] = std::to_string(value.bytesIn);
++		client["bytesOut"] = std::to_string(value.bytesOut);
++		client["bytesTotal"] = std::to_string(addSaturating(value.bytesIn, value.bytesOut));
++		client["lastRelayedAt"] = value.lastRelayedAt;
++		out["clients"].push_back(std::move(client));
++	}
++
++	out["droppedFlows"] = std::to_string(relayTelemetryDroppedFlows);
++	return out.dump();
++}
+ // Packet Type Counts
+ prometheus::simpleapi::counter_family_t packets { "zt_packet", "ZeroTier packet type counts" };
+ 
+diff --git a/node/Metrics.hpp b/node/Metrics.hpp
+index f4d4e20f..745e747e 100644
+--- a/node/Metrics.hpp
++++ b/node/Metrics.hpp
+@@ -14,6 +14,9 @@
+ #include <prometheus/histogram.h>
+ // clang-format on
+ 
++#include <stdint.h>
++#include <string>
++
+ namespace prometheus {
+ namespace simpleapi {
+ extern std::shared_ptr<Registry> registry_ptr;
+@@ -22,6 +25,17 @@ extern std::shared_ptr<Registry> registry_ptr;
+ 
+ namespace ZeroTier {
+ namespace Metrics {
++
++// Relay telemetry records packets that this node actually forwards. The
++// source/destination addresses are read from the ZeroTier wire header; the
++// encrypted payload is never inspected.
++enum class RelayTransport {
++	UDP = 0,
++	TCP = 1,
++};
++
++void recordRelayForward(uint64_t source, uint64_t destination, RelayTransport transport, unsigned int bytes, int64_t now);
++std::string relayTelemetryJson(uint64_t observerId, int64_t now);
+ // Packet Type Counts
+ extern prometheus::simpleapi::counter_family_t packets;
+ 
+diff --git a/service/OneService.cpp b/service/OneService.cpp
+index d5d08605..796ae0e9 100644
+--- a/service/OneService.cpp
++++ b/service/OneService.cpp
+@@ -30,6 +30,7 @@
+ #include "../node/MAC.hpp"
+ #include "../node/Mutex.hpp"
+ #include "../node/Node.hpp"
++#include "../node/Packet.hpp"
+ #include "../node/Peer.hpp"
+ #include "../node/Utils.hpp"
+ #include "../node/World.hpp"
+@@ -754,6 +755,20 @@ static void _moonToJson(nlohmann::json& mj, const World& world)
+ 	mj["waiting"] = false;
+ }
+ 
++
++// Parse only the unencrypted ZeroTier wire header. The outer source and
++// destination addresses are available before forwarding; the encrypted
++// payload is deliberately never inspected or treated as authenticated here.
++static bool _relayPacketAddresses(const void* data, unsigned int len, uint64_t localNode, uint64_t& source, uint64_t& destination)
++{
++	if ((! data) || (len < ZT_PROTO_MIN_PACKET_LENGTH))
++		return false;
++	const uint8_t* raw = reinterpret_cast<const uint8_t*>(data);
++	destination = Address(raw + ZT_PACKET_IDX_DEST, ZT_ADDRESS_LENGTH).toInt();
++	source = Address(raw + ZT_PACKET_IDX_SOURCE, ZT_ADDRESS_LENGTH).toInt();
++	return (source && destination && (source != destination) && (source != localNode) && (destination != localNode));
++}
++
+ class OneServiceImpl;
+ 
+ static int SnodeVirtualNetworkConfigFunction(ZT_Node* node, void* uptr, void* tptr, uint64_t nwid, void** nuptr, enum ZT_VirtualNetworkConfigOperation op, const ZT_VirtualNetworkConfig* nwconf);
+@@ -1751,6 +1766,7 @@ class OneServiceImpl : public OneService {
+ 		std::string peerPath = "/peer/([0-9a-fA-F]{10})";
+ 		std::string statusPath = "/status";
+ 		std::string metricsPath = "/metrics";
++		std::string relayTelemetryPath = "/relay/telemetry";
+ 
+ 		
+ 
+@@ -2585,6 +2601,12 @@ class OneServiceImpl : public OneService {
+ 		_controlPlane.Get(metricsPath, metricsGet);
+ 		_controlPlaneV6.Get(metricsPath, metricsGet);
+ 
++		auto relayTelemetryGet = [this, setContent](const httplib::Request& req, httplib::Response& res) {
++			setContent(req, res, Metrics::relayTelemetryJson(_node->address(), OSUtils::now()));
++		};
++		_controlPlane.Get(relayTelemetryPath, relayTelemetryGet);
++		_controlPlaneV6.Get(relayTelemetryPath, relayTelemetryGet);
++
+ 		auto exceptionHandler = [&, setContent](const httplib::Request& req, httplib::Response& res, std::exception_ptr ep) {
+ 			auto provider = opentelemetry::trace::Provider::GetTracerProvider();
+ 			auto tracer = provider->GetTracer("http_control_plane");
+@@ -3992,6 +4014,7 @@ class OneServiceImpl : public OneService {
+ 					if (_forceTcpRelay || (((now - _lastDirectReceiveFromGlobal) > ZT_TCP_FALLBACK_AFTER) && ((now - _lastRestart) > ZT_TCP_FALLBACK_AFTER))) {
+ 						if (_tcpFallbackTunnel) {
+ 							bool flushNow = false;
++							bool queued = false;
+ 							{
+ 								Mutex::Lock _l(_tcpFallbackTunnel->writeq_m);
+ 								if (_tcpFallbackTunnel->writeq.size() < (1024 * 64)) {
+@@ -4009,8 +4032,15 @@ class OneServiceImpl : public OneService {
+ 									_tcpFallbackTunnel->writeq.append(reinterpret_cast<const char*>(reinterpret_cast<const void*>(&(reinterpret_cast<const struct sockaddr_in*>(addr)->sin_addr.s_addr))), 4);
+ 									_tcpFallbackTunnel->writeq.append(reinterpret_cast<const char*>(reinterpret_cast<const void*>(&(reinterpret_cast<const struct sockaddr_in*>(addr)->sin_port))), 2);
+ 									_tcpFallbackTunnel->writeq.append((const char*)data, len);
++									queued = true;
+ 								}
+ 							}
++							if (queued) {
++								uint64_t source = 0;
++								uint64_t destination = 0;
++								if (_relayPacketAddresses(data, len, _node->address(), source, destination))
++									Metrics::recordRelayForward(source, destination, Metrics::RelayTransport::TCP, len, now);
++							}
+ 							if (flushNow) {
+ 								void* tmpptr = (void*)_tcpFallbackTunnel;
+ 								phyOnTcpWritable(_tcpFallbackTunnel->sock, &tmpptr);
+@@ -4054,10 +4084,23 @@ class OneServiceImpl : public OneService {
+ 			if ((ttl) && (addr->ss_family == AF_INET)) {
+ 				_phy.setIp4UdpTtl((PhySocket*)((uintptr_t)localSocket), 255);
+ 			}
++			if (r) {
++				uint64_t source = 0;
++				uint64_t destination = 0;
++				if (_relayPacketAddresses(data, len, _node->address(), source, destination))
++					Metrics::recordRelayForward(source, destination, Metrics::RelayTransport::UDP, len, OSUtils::now());
++			}
+ 			return ((r) ? 0 : -1);
+ 		}
+ 		else {
+-			return ((_binder.udpSendAll(_phy, addr, data, len, ttl)) ? 0 : -1);
++			const bool r = _binder.udpSendAll(_phy, addr, data, len, ttl);
++			if (r) {
++				uint64_t source = 0;
++				uint64_t destination = 0;
++				if (_relayPacketAddresses(data, len, _node->address(), source, destination))
++					Metrics::recordRelayForward(source, destination, Metrics::RelayTransport::UDP, len, OSUtils::now());
++			}
++			return (r ? 0 : -1);
+ 		}
+ 	}
+ 

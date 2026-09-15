@@ -102,6 +102,11 @@ model network_members {
   connectionStatus   Int?
   connectionPendingStatus Int?
   connectionPendingSince DateTime?
+  // Live peer path metrics, refreshed by the Controller observation worker.
+  // connectionStatus remains the stable numeric status used by notifications;
+  // connectionType adds the transport detail (UDP/TCP relay or direct path).
+  connectionType      String?
+  latencyMs           Int?
   authorized         Boolean?                @default(false)
   physicalAddress    String?
   online             Boolean?                @default(false)
@@ -133,6 +138,8 @@ model network_members {
   notations          NetworkMemberNotation[]
 
   @@unique([id, nwid])
+  @@index([nwid, connectionType])
+  @@index([nwid, latencyMs])
 }
 
 model network {
@@ -550,4 +557,81 @@ model NotificationDelivery {
  updatedAt DateTime @updatedAt
  deliveredAt DateTime?
  @@index([status, createdAt])
+}
+
+// Wire-level relay observations. ZeroTier forwards encrypted packets before
+// end-to-end decryption, so consumers must retain the `wire_observed` caveat.
+model RelayObserver {
+  id         String   @id @default(cuid())
+  observerId String
+  bootId     String
+  version    Int      @default(1)
+  confidence String   @default("wire_observed")
+  lastSeen   DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([observerId, bootId])
+  @@index([observerId, lastSeen])
+}
+
+model RelayFlowObservation {
+  id                String   @id @default(cuid())
+  observerId        String
+  bootId            String
+  sessionKey        String   @default("")
+  sourceNodeId      String
+  destinationNodeId String
+  transport         String
+  firstSeen         DateTime
+  lastSeen          DateTime
+  active            Boolean  @default(false)
+  packets           BigInt   @default(0)
+  bytes             BigInt   @default(0)
+  sampledAt         DateTime @default(now())
+
+  @@unique([observerId, bootId, sessionKey, sourceNodeId, destinationNodeId, transport])
+  @@index([sourceNodeId, lastSeen])
+  @@index([destinationNodeId, lastSeen])
+  @@index([observerId, active, lastSeen])
+}
+
+model RelaySessionObservation {
+  id            String   @id @default(cuid())
+  observerId    String
+  bootId        String
+  sessionId     String
+  remoteAddress String
+  startedAt     DateTime
+  lastSeen      DateTime
+  closedAt      DateTime?
+  active        Boolean  @default(false)
+  packetsToUdp  BigInt   @default(0)
+  packetsToTcp  BigInt   @default(0)
+  bytesToUdp    BigInt   @default(0)
+  bytesToTcp    BigInt   @default(0)
+  flowCount     Int      @default(0)
+  sampledAt     DateTime @default(now())
+
+  @@unique([observerId, bootId, sessionId])
+  @@index([observerId, active, lastSeen])
+  @@index([remoteAddress, lastSeen])
+}
+
+model RelayTrafficBucket {
+  id              String   @id @default(cuid())
+  observerId      String
+  nodeId          String
+  transport       String
+  bucketStart     DateTime
+  bytesIn         BigInt   @default(0)
+  bytesOut        BigInt   @default(0)
+  packetsIn       BigInt   @default(0)
+  packetsOut      BigInt   @default(0)
+  sessionsStarted Int      @default(0)
+  sampledAt       DateTime @default(now())
+
+  @@unique([observerId, nodeId, transport, bucketStart])
+  @@index([nodeId, bucketStart])
+  @@index([observerId, bucketStart])
 }

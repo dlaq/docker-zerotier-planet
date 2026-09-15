@@ -293,6 +293,9 @@ services:
       # Optional explicit HTTP(S) forward proxy for Message Pusher only. This
       # is needed on VPS networks that block direct outbound TCP/443.
       ZTPLANET_MESSAGE_PUSHER_PROXY: "${ZTPLANET_MESSAGE_PUSHER_PROXY:-}"
+      # Internal-only relay observer endpoint; no host port is published.
+      ZT_RELAY_TELEMETRY_URLS: "${ZT_RELAY_TELEMETRY_URLS:-http://relay:9090/relay/telemetry}"
+      ZT_RELAY_TELEMETRY_TOKEN: "${ZT_RELAY_TELEMETRY_TOKEN:-}"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
       - ./data/zerotier:/run/zerotier-controller:ro
@@ -477,8 +480,9 @@ services:
     restart: unless-stopped
     environment:
       RELAY_LISTEN: 0.0.0.0:4443
-      # 仅绑定 relay 专用网络地址，供健康检查和配置代理读取；不要映射到宿主机。
-      RELAY_METRICS_LISTEN: "${RELAY_METRICS_LISTEN:-172.31.254.2:9090}"
+      # 仅在 Docker 内部网络提供指标/遥测；不要映射到宿主机。
+      RELAY_METRICS_LISTEN: "${RELAY_METRICS_LISTEN:-0.0.0.0:9090}"
+      RELAY_TELEMETRY_TOKEN: "${ZT_RELAY_TELEMETRY_TOKEN:-}"
       RELAY_ALLOWED_CIDRS: ${RELAY_ALLOWED_CIDRS:-}
       RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-128}
       RELAY_MAX_CONNECTIONS_PER_IP: ${RELAY_MAX_CONNECTIONS_PER_IP:-4}
@@ -494,6 +498,7 @@ services:
     ports:
       - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_PUBLIC_PORT:-4443}:4443/tcp"
     networks:
+      app-network:
       relay-egress:
         ipv4_address: 172.31.254.2
     read_only: true

@@ -1,6 +1,7 @@
 jest.mock("~/utils/ztApi", () => ({ peers: jest.fn(), member_status: jest.fn() }));
 import {
 	determineConnectionStatus,
+	determineConnectionType,
 	memberIpState,
 	ConnectionStatus as S,
 } from "~/utils/memberConnection";
@@ -86,6 +87,28 @@ test("uses only the active preferred non-expired path and handles IPv6", () => {
 		determineConnectionStatus(member({ paths: [path("10.1.1.1/9993")] }), false),
 	).toBe(S.Offline);
 	expect(determineConnectionStatus(member({ latency: -1 }))).toBe(S.Unknown);
+});
+
+test("distinguishes direct, UDP relay, TCP relay, and legacy relay peers", () => {
+	const direct = { paths: [path("203.0.113.8/9993")], tunneled: true };
+	const udp = { paths: [path("203.0.113.8/9993", { active: false })], tunneled: false };
+	const tcp = { paths: [], tunneled: true };
+	expect(determineConnectionType(member(direct), true)).toBe("direct_wan");
+	expect(determineConnectionType(member(udp), true)).toBe("relay");
+	expect(determineConnectionType(member(tcp), true)).toBe("tcp_relay");
+	expect(determineConnectionType(member({ paths: [path("203.0.113.8/9993", { active: false })] }), true)).toBe(
+		"relay",
+	);
+});
+
+test("persists live connection type and peer latency with the observation", () => {
+	const db = row({ connectionType: "direct_wan", latencyMs: 20 });
+	const m = member({ paths: [], tunneled: true, latency: 84 });
+	const data = observeMember(db, m, live());
+	expect(m.connectionType).toBe("tcp_relay");
+	expect(m.latencyMs).toBe(84);
+	expect(data.connectionType).toBe("tcp_relay");
+	expect(data.latencyMs).toBe(84);
 });
 
 test("IP assignment state is independent from direct/relay and includes generated IPv6", () => {

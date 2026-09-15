@@ -33,6 +33,28 @@ export interface MemberEntity {
 	statusSource?: "controller" | "legacy" | "unavailable";
 	online?: boolean;
 	conStatus?: number;
+	/** Connection path observed from the local Controller to this member. */
+	connectionType?: ConnectionType;
+	/** Last peer round-trip latency in milliseconds; null means unavailable. */
+	latencyMs?: number | null;
+	/** Bytes observed through a server relay during the selected report window. */
+	relayBytesIn?: string;
+	relayBytesOut?: string;
+	relayBytesTotal?: string;
+	relayPacketsIn?: string;
+	relayPacketsOut?: string;
+	relayLastRelayedAt?: number | null;
+	relayConfidence?: "wire_observed" | null;
+	relayByTransport?: Record<
+		string,
+		{
+			bytesIn: string;
+			bytesOut: string;
+			bytesTotal: string;
+			packetsIn: string;
+			packetsOut: string;
+		}
+	>;
 	vMajor: number;
 	vMinor: number;
 	vProto: number;
@@ -84,7 +106,19 @@ export interface Peers {
 	versionMajor: number;
 	versionMinor: number;
 	versionRev: number;
+	/** True when the Controller is currently using its TCP fallback tunnel. */
+	tunneled?: boolean;
 }
+
+export type ConnectionType =
+	| "offline"
+	| "direct_lan"
+	| "direct_wan"
+	| "udp_relay"
+	| "tcp_relay"
+	| "relay"
+	| "controller"
+	| "unknown";
 
 export interface Paths {
 	active: boolean;

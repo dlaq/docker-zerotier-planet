@@ -181,4 +181,46 @@ describe("network.getNetworkMembers", () => {
 		// No DB pagination for central.
 		expect(ctx.prisma.network_members.findMany).not.toHaveBeenCalled();
 	});
+
+	test("central networks apply search and sort before pagination", async () => {
+		const ctx = makeCtx();
+		zt.central_network_and_members.mockResolvedValue({
+			members: [
+				{ id: "a", name: "Alpha", latencyMs: 80, authorized: true },
+				{ id: "b", name: "Beta", latencyMs: 12, authorized: true },
+				{ id: "c", name: "Gamma", latencyMs: 5, authorized: true },
+			],
+		});
+
+		const caller = appRouter.createCaller(ctx);
+		const result = await caller.network.getNetworkMembers({
+			nwid: "nw1",
+			central: true,
+			search: "a",
+			sortBy: "latencyMs",
+			sortDir: "asc",
+		});
+
+		expect(result.members.map((m) => m.id)).toEqual(["c", "b", "a"]);
+		expect(result.totalCount).toBe(3);
+	});
+
+	test("sorts latency through the persisted DB metric", async () => {
+		const ctx = makeCtx();
+		ctx.prisma.network_members.count
+			.mockResolvedValueOnce(3)
+			.mockResolvedValueOnce(3)
+			.mockResolvedValueOnce(2);
+		ctx.prisma.network_members.findMany.mockResolvedValue([]);
+
+		const caller = appRouter.createCaller(ctx);
+		await caller.network.getNetworkMembers({
+			nwid: "nw1",
+			sortBy: "latencyMs",
+			sortDir: "desc",
+		});
+
+		const args = ctx.prisma.network_members.findMany.mock.calls[0][0];
+		expect(args.orderBy).toEqual({ latencyMs: "desc" });
+	});
 });

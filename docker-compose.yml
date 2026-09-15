@@ -168,6 +168,9 @@ services:
       # caller opts in. Message Pusher uses an explicit proxy setting instead
       # so an isolated VPS can reach the gateway without proxying other calls.
       ZTPLANET_MESSAGE_PUSHER_PROXY: "${ZTPLANET_MESSAGE_PUSHER_PROXY:-}"
+      # Internal-only relay observer endpoint; no host port is published.
+      ZT_RELAY_TELEMETRY_URLS: "${ZT_RELAY_TELEMETRY_URLS:-http://relay:9090/relay/telemetry}"
+      ZT_RELAY_TELEMETRY_TOKEN: "${ZT_RELAY_TELEMETRY_TOKEN:-}"
       NPM_CONFIG_CACHE: /tmp/npm-cache
     volumes:
       - ./data/zerotier:/run/zerotier-controller:ro
@@ -273,9 +276,11 @@ services:
         required: false
     environment:
       RELAY_LISTEN: 0.0.0.0:4443
-      # 仅绑定 relay 专用网络地址；该端口没有宿主机映射。
-      RELAY_METRICS_LISTEN: 172.31.254.2:9090
+      # 仅在 Docker 内部网络提供指标/遥测；该端口没有宿主机映射。
+      RELAY_METRICS_LISTEN: 0.0.0.0:9090
+      RELAY_TELEMETRY_TOKEN: "${ZT_RELAY_TELEMETRY_TOKEN:-}"
     networks:
+      app-network:
       relay-egress:
         ipv4_address: 172.31.254.2
     ports:

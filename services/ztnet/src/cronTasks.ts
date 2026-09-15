@@ -3,6 +3,7 @@ import { prisma } from "./server/db";
 import * as ztController from "~/utils/ztApi";
 
 import { reconcileNetworkMembersOnce } from "./server/api/services/memberService";
+import { collectRelayTelemetry } from "./server/api/services/relayTelemetryService";
 
 type FakeContext = {
 	session: {
@@ -172,6 +173,20 @@ export const updatePeers = async () => {
 					organization: { select: { ownerId: true } },
 				},
 			});
+			const telemetryOwner = networks.find(
+				(network) => network.authorId || network.organization?.ownerId,
+			);
+			await collectRelayTelemetry(
+				telemetryOwner
+					? ({
+							session: {
+								user: {
+									id: telemetryOwner.authorId || telemetryOwner.organization?.ownerId,
+								},
+							},
+						} as import("~/types/ctx").UserContext)
+					: undefined,
+			);
 			for (const network of networks) {
 				const ownerId = network.authorId || network.organization?.ownerId;
 				if (!ownerId) continue;

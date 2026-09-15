@@ -4,7 +4,9 @@ import socket
 import struct
 import subprocess
 import time
+import json
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -29,6 +31,7 @@ class RelayProtocolTests(unittest.TestCase):
             "RELAY_IDLE_TIMEOUT_SECONDS": "30",
             "RELAY_MAX_CONNECTIONS": "4",
             "RELAY_MAX_CONNECTIONS_PER_IP": "4",
+            "RELAY_TELEMETRY_TOKEN": "test-relay-telemetry-token",
         }
         cls.process = subprocess.Popen(
             [str(binary)], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
@@ -58,6 +61,24 @@ class RelayProtocolTests(unittest.TestCase):
             for line in body.splitlines()
             if line.startswith("zt_relay_")
         }
+
+    def test_telemetry_endpoint_requires_token_and_returns_schema(self):
+        with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{self.metrics_port}/relay/telemetry", timeout=1
+            )
+        self.assertEqual(unauthorized.exception.code, 401)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.metrics_port}/relay/telemetry",
+            headers={"X-Relay-Telemetry-Token": "test-relay-telemetry-token"},
+        )
+        with urllib.request.urlopen(request, timeout=1) as response:
+            self.assertEqual(response.status, 200)
+            payload = json.loads(response.read().decode())
+        self.assertEqual(payload["confidence"], "wire_observed")
+        self.assertEqual(payload["transport"], "tcp_relay")
+        self.assertIsInstance(payload["flows"], list)
+        self.assertIsInstance(payload["sessions"], list)
 
     def test_split_greeting_and_private_destination_are_handled_safely(self):
         before = self.metrics()

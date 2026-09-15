@@ -95,7 +95,9 @@
 			},
 			"status": "状态",
 			"lastOnlineAt": "最近上线",
-			"lastSeen": "最后通信"
+			"lastSeen": "最后通信",
+			"latency": "延迟",
+			"relayTraffic": "中继流量"
 		},
 		"search": {
 			"networkSearchPlaceholder": "搜索网络",
@@ -427,6 +429,17 @@
 			},
 			"search": {
 				"placeholder": "搜索任何东西..."
+			},
+			"relayWindow": {
+				"label": "中继流量窗口",
+				"help": "选择统计窗口",
+				"options": {
+					"1h": "最近 1 小时",
+					"24h": "最近 24 小时",
+					"7d": "最近 7 天",
+					"30d": "最近 30 天",
+					"all": "全部"
+				}
 			}
 		},
 		"deletedNetworkMembersTable": {
@@ -1307,13 +1320,22 @@
 		"noHistory": "尚无可靠观测记录；不会用导入或刷新时间填补历史记录。",
 		"lastSeenHelp": "Controller 最近收到该节点网络配置请求的时间，按当前浏览器时区显示。",
 		"lastOnlineHelp": "开始监测后，最近一段已观测在线周期的起始时间，按当前浏览器时区显示。",
-		"pathHelp": "表示 Controller → 此节点的连接，不能代表任意两台客户端之间的连接；无法据此判断客户端 TCP 回退。",
+		"pathHelp": "表示 Controller → 此节点的连接；当前 Controller 可标明 UDP/TCP 回退，但不能代表任意两台客户端之间的路径。",
+		"latencyHelp": "Controller peer API 报告的延迟，单位为毫秒。",
+		"latencyUnavailable": "暂无延迟数据",
+		"relayTrafficHelp": "中继流量为服务端线路观测值；直联流量不计入。",
+		"relayIn": "入站",
+		"relayOut": "出站",
+		"lastRelayed": "最近中继",
+		"relayTrafficUnavailable": "暂无中继流量",
 		"unknownHelp": "当前缺少可靠观测。Controller 重启或采集失败不等于节点离线。",
 		"assignmentHelp": "显示 Controller 的授权和地址分配状态；客户端实际应用结果及客户端错误需要客户端上报。",
 		"unknown": "未知",
 		"online": "在线",
 		"offline": "离线",
 		"relayed": "中转",
+		"udpRelay": "UDP 中继",
+		"tcpRelay": "TCP 中继",
 		"directLan": "直联（内网）",
 		"directWan": "直联（公网）",
 		"controller": "控制器",

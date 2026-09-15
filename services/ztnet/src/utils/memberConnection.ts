@@ -1,4 +1,4 @@
-import type { MemberEntity, Peers } from "~/types/local/member";
+import type { ConnectionType, MemberEntity, Peers } from "~/types/local/member";
 import type { NetworkEntity } from "~/types/local/network";
 import { Address4, Address6 } from "ip-address";
 
@@ -10,6 +10,17 @@ export enum ConnectionStatus {
 	Controller = 4,
 	Unknown = 5,
 }
+
+export const CONNECTION_TYPES = {
+	Offline: "offline",
+	DirectLAN: "direct_lan",
+	DirectWAN: "direct_wan",
+	UdpRelay: "udp_relay",
+	TcpRelay: "tcp_relay",
+	Relay: "relay",
+	Controller: "controller",
+	Unknown: "unknown",
+} as const satisfies Record<string, ConnectionType>;
 
 export function activePreferredPath(peers: Partial<Peers> | null | undefined) {
 	return peers?.paths?.find(
@@ -60,6 +71,48 @@ export function determineConnectionStatus(
 	// request with no live direct path is. Unobserved/legacy peers stay unknown.
 	return online === true ? ConnectionStatus.Relayed : ConnectionStatus.Unknown;
 }
+
+/**
+ * Resolve the transport shown in the members table. The peer API exposes a
+ * `tunneled` flag for the Controller TCP fallback tunnel. A false value only
+ * proves that TCP fallback is not active; it does not prove that the path is
+ * UDP relay, so the UI uses the generic relay label until wire telemetry
+ * confirms the transport.
+ */
+export function determineConnectionType(
+	member: Pick<MemberEntity, "id" | "nwid" | "peers">,
+	online?: boolean,
+	peersAvailable = true,
+): ConnectionType {
+	const status = determineConnectionStatus(member, online, peersAvailable);
+	switch (status) {
+		case ConnectionStatus.Offline:
+			return CONNECTION_TYPES.Offline;
+		case ConnectionStatus.DirectLAN:
+			return CONNECTION_TYPES.DirectLAN;
+		case ConnectionStatus.DirectWAN:
+			return CONNECTION_TYPES.DirectWAN;
+		case ConnectionStatus.Controller:
+			return CONNECTION_TYPES.Controller;
+		case ConnectionStatus.Relayed:
+			if (member.peers && "tunneled" in member.peers) {
+				return member.peers.tunneled ? CONNECTION_TYPES.TcpRelay : CONNECTION_TYPES.Relay;
+			}
+			return CONNECTION_TYPES.Relay;
+		default:
+			// A TCP fallback tunnel can be reported even while the peer has no
+			// direct path and the network-scoped status is not yet warm.
+			return member.peers && member.peers.tunneled === true
+				? CONNECTION_TYPES.TcpRelay
+				: CONNECTION_TYPES.Unknown;
+	}
+}
+
+/** Convert the Controller's -1/unknown latency sentinel to a nullable value. */
+export const normalizePeerLatency = (value: unknown): number | null => {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+	return Math.round(value);
+};
 
 export function memberIpState(
 	member: Pick<MemberEntity, "authorized" | "ipAssignments" | "noAutoAssignIps">,

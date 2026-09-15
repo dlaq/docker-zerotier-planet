@@ -30,7 +30,7 @@ const hashMembers = (members: MemberEntity[]): string =>
 					m.ipAssignments ?? []
 				).join(
 					",",
-				)}:${m.name ?? ""}:${m.lastSeen ?? ""}:${m.lastOnlineAt ?? ""}:${m.lastOfflineAt ?? ""}`,
+				)}:${m.name ?? ""}:${m.lastSeen ?? ""}:${m.lastOnlineAt ?? ""}:${m.lastOfflineAt ?? ""}:${m.connectionType ?? ""}:${m.latencyMs ?? ""}`,
 		)
 		.sort()
 		.join("|");

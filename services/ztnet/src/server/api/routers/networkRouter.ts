@@ -3,7 +3,6 @@ import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { IPv4gen, getNetworkClassCIDR } from "~/utils/IPv4gen";
 import * as ztController from "~/utils/ztApi";
 import RuleCompiler from "~/utils/rule-compiler";
-import { sortIP } from "~/utils/sorting";
 import { throwError, type APIError } from "~/server/helpers/errorHandler";
 import { sendMailWithTemplate } from "~/utils/mail";
 import type { TagsByName, NetworkEntity, RoutesEntity } from "~/types/local/network";
@@ -35,6 +34,13 @@ import {
 	matchesMemberFilter,
 	type MemberFilter,
 } from "~/utils/memberFilter";
+import { MEMBER_SORT_VALUES, sortMembers } from "~/utils/memberSorting";
+import {
+	collectRelayTelemetry,
+	getRelaySessions,
+	getRelayTrafficForMembers,
+	type RelayTrafficWindow,
+} from "../services/relayTelemetryService";
 
 const RouteSchema = z.object({
 	target: z
@@ -406,21 +412,9 @@ export const networkRouter = createTRPCRouter({
 				sync: z.boolean().optional().default(false),
 				search: z.string().trim().optional(),
 				memberFilter: z.enum(MEMBER_FILTER_VALUES).default("all"),
-				sortBy: z
-					.enum([
-						"id",
-						"name",
-						"authorized",
-						"online",
-						"physicalAddress",
-						"ipAssignments",
-						"lastSeen",
-						"lastOnlineAt",
-						"lastOfflineAt",
-						"creationTime",
-					])
-					.default("id"),
+				sortBy: z.enum(MEMBER_SORT_VALUES).default("id"),
 				sortDir: z.enum(["asc", "desc"]).default("asc"),
+				relayWindow: z.enum(["1h", "24h", "7d", "30d", "all"]).default("24h"),
 			}),
 		)
 		.query(async ({ ctx, input }) => {
@@ -435,14 +429,28 @@ export const networkRouter = createTRPCRouter({
 					true,
 				);
 				const all = (response?.members ?? []) as MemberEntity[];
-				const filtered = all.filter((member) =>
-					matchesMemberFilter(member, input.memberFilter),
-				);
+				const search = input.search?.toLocaleLowerCase();
+				const filtered = all
+					.filter((member) => matchesMemberFilter(member, input.memberFilter))
+					.filter((member) => {
+						if (!search) return true;
+						return [
+							member.id,
+							member.name,
+							member.description,
+							member.physicalAddress,
+							...(member.ipAssignments ?? []),
+						].some(
+							(value) =>
+								typeof value === "string" && value.toLocaleLowerCase().includes(search),
+						);
+					});
+				const sorted = sortMembers(filtered, input.sortBy, input.sortDir);
 				const start = input.page * input.pageSize;
 				return {
-					members: filtered.slice(start, start + input.pageSize),
-					totalCount: filtered.length,
-					authorizedCount: filtered.filter((m) => m.authorized).length,
+					members: sorted.slice(start, start + input.pageSize),
+					totalCount: sorted.length,
+					authorizedCount: sorted.filter((m) => m.authorized).length,
 				};
 			}
 
@@ -489,36 +497,33 @@ export const networkRouter = createTRPCRouter({
 					typeof ctx.prisma.network_members.findMany<{ include: typeof include }>
 				>
 			>;
-			if (input.sortBy === "ipAssignments") {
-				// Prisma can't ORDER BY an array column, so sort by the first IP
-				// numerically here, reusing the original `sortIP` logic so the order
-				// matches the pre-refactor table exactly (IPv4/IPv6 aware). IP sort is
-				// user-initiated and only pulls a tiny {id, ipAssignments} projection.
-				const ipKey = (ips: string[] | null | undefined): bigint =>
-					ips?.length ? sortIP(ips[0].split("/")[0]) : BigInt(0);
-				const keyed = await ctx.prisma.network_members.findMany({
+			const inMemorySort = new Set([
+				"id",
+				"ipAssignments",
+				"physicalAddress",
+				"notations",
+				"relayBytesTotal",
+			]);
+			if (inMemorySort.has(input.sortBy)) {
+				// Prisma cannot numerically order arrays/IP addresses or relation labels.
+				// Fetch only matching rows, sort them with the same comparator used by
+				// hosted networks, then apply the page slice.
+				const allRows = (await ctx.prisma.network_members.findMany({
 					where,
-					select: { id: true, ipAssignments: true },
-				});
-				keyed.sort((a, b) => {
-					const av = ipKey(a.ipAssignments);
-					const bv = ipKey(b.ipAssignments);
-					const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-					return input.sortDir === "desc" ? -cmp : cmp;
-				});
-				const pageIds = keyed.slice(skip, skip + input.pageSize).map((r) => r.id);
-				const pageRows = await ctx.prisma.network_members.findMany({
-					where: { nwid: input.nwid, id: { in: pageIds } },
 					include,
-				});
-				const byId = new Map(pageRows.map((r) => [r.id, r]));
-				rows = pageIds
-					.map((id) => byId.get(id))
-					.filter((r): r is (typeof pageRows)[number] => Boolean(r));
+				})) as unknown as MemberEntity[];
+				rows =
+					input.sortBy === "relayBytesTotal"
+						? (allRows as unknown as typeof rows)
+						: (sortMembers(allRows, input.sortBy, input.sortDir).slice(
+								skip,
+								skip + input.pageSize,
+							) as unknown as typeof rows);
 			} else {
+				const dbSortBy = input.sortBy === "conStatus" ? "connectionType" : input.sortBy;
 				rows = await ctx.prisma.network_members.findMany({
 					where,
-					orderBy: { [input.sortBy]: input.sortDir },
+					orderBy: { [dbSortBy]: input.sortDir },
 					skip,
 					take: input.pageSize,
 					include,
@@ -532,8 +537,108 @@ export const networkRouter = createTRPCRouter({
 				}),
 			]);
 
-			const members = await attachLiveStatus(ctx, rows);
+			const liveMembers = await attachLiveStatus(ctx, rows);
+			// Relay counters are collected by the background worker. Reading them in
+			// one grouped query keeps the member table free of per-row requests.
+			const traffic = await getRelayTrafficForMembers(
+				input.nwid,
+				liveMembers.map((member) => member.id),
+				input.relayWindow as RelayTrafficWindow,
+				ctx.prisma,
+			);
+			const membersWithTraffic = liveMembers.map((member) => {
+				const summary = traffic.get(member.id.toLowerCase());
+				return summary?.confidence
+					? {
+							...member,
+							relayBytesIn: summary.bytesIn,
+							relayBytesOut: summary.bytesOut,
+							relayBytesTotal: summary.bytesTotal,
+							relayPacketsIn: summary.packetsIn,
+							relayPacketsOut: summary.packetsOut,
+							relayLastRelayedAt: summary.lastRelayedAt,
+							relayConfidence: summary.confidence,
+							relayByTransport: summary.byTransport,
+						}
+					: member;
+			});
+			const members =
+				input.sortBy === "relayBytesTotal"
+					? sortMembers(membersWithTraffic, input.sortBy, input.sortDir).slice(
+							skip,
+							skip + input.pageSize,
+						)
+					: membersWithTraffic;
 			return { members, totalCount, authorizedCount };
+		}),
+	getRelayTraffic: protectedProcedure
+		.input(
+			z.object({
+				nwid: z.string(),
+				memberId: z
+					.string()
+					.regex(/^[0-9a-f]{10}$/i)
+					.optional(),
+				window: z.enum(["1h", "24h", "7d", "30d", "all"]).default("24h"),
+			}),
+		)
+		.query(async ({ ctx, input }) => {
+			await checkNetworkAccess(ctx, input.nwid, Role.READ_ONLY);
+			void collectRelayTelemetry(ctx).catch(() => undefined);
+			const members = await ctx.prisma.network_members.findMany({
+				where: {
+					nwid: input.nwid,
+					deleted: false,
+					...(input.memberId ? { id: input.memberId } : {}),
+				},
+				select: { id: true },
+			});
+			const traffic = await getRelayTrafficForMembers(
+				input.nwid,
+				members.map((member) => member.id),
+				input.window as RelayTrafficWindow,
+				ctx.prisma,
+			);
+			return members.map((member) => ({
+				memberId: member.id,
+				...(traffic.get(member.id.toLowerCase()) || {
+					bytesIn: "0",
+					bytesOut: "0",
+					bytesTotal: "0",
+					packetsIn: "0",
+					packetsOut: "0",
+					lastRelayedAt: null,
+					confidence: null,
+					byTransport: {},
+				}),
+			}));
+		}),
+	getRelaySessions: protectedProcedure
+		.input(
+			z.object({
+				nwid: z.string(),
+				window: z.enum(["1h", "24h", "7d", "30d", "all"]).default("24h"),
+				active: z.boolean().optional(),
+			}),
+		)
+		.query(async ({ ctx, input }) => {
+			await checkNetworkAccess(ctx, input.nwid, Role.READ_ONLY);
+			void collectRelayTelemetry(ctx).catch(() => undefined);
+			const memberIds = await ctx.prisma.network_members.findMany({
+				where: { nwid: input.nwid, deleted: false },
+				select: { id: true },
+			});
+			return {
+				window: input.window,
+				networkScope: "node_observed" as const,
+				confidence: "wire_observed" as const,
+				observers: await getRelaySessions(
+					memberIds.map((member) => member.id),
+					input.window as RelayTrafficWindow,
+					input.active,
+					ctx.prisma,
+				),
+			};
 		}),
 	deleteNetwork: protectedProcedure
 		.input(

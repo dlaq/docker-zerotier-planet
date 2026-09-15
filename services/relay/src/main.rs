@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
+use std::fmt::Write as FmtWrite;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::str::FromStr;
@@ -13,6 +14,14 @@ const ADDRESS_HEADER_LEN: usize = 7;
 const GREETING_LEN: usize = 9;
 const DEFAULT_MAX_FRAME_LEN: usize = 4096;
 const MAX_RESPONSE_CREDIT: u64 = 16 * 1024;
+const ZT_PACKET_MIN_LEN: usize = 28;
+const ZT_PACKET_DEST_OFFSET: usize = 8;
+const ZT_PACKET_SOURCE_OFFSET: usize = 13;
+const ZT_ADDRESS_LEN: usize = 5;
+const RELAY_FLOW_ACTIVE_MS: u64 = 120_000;
+const RELAY_FLOW_RETENTION_MS: u64 = 900_000;
+const RELAY_FLOW_LIMIT: usize = 8_192;
+const RELAY_SESSION_RETENTION_MS: u64 = 900_000;
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -191,6 +200,374 @@ impl Metrics {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelayDirection {
+    ToUdp,
+    ToTcp,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+struct FlowKey {
+    source: u64,
+    destination: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct FlowRecord {
+    packets: u64,
+    bytes: u64,
+    first_seen: u64,
+    last_seen: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ClientTraffic {
+    packets_in: u64,
+    packets_out: u64,
+    bytes_in: u64,
+    bytes_out: u64,
+    last_relayed_at: u64,
+}
+
+#[derive(Clone, Debug)]
+struct SessionRecord {
+    remote_address: String,
+    started_at: u64,
+    last_seen: u64,
+    closed_at: Option<u64>,
+    packets_to_udp: u64,
+    packets_to_tcp: u64,
+    bytes_to_udp: u64,
+    bytes_to_tcp: u64,
+    flows: BTreeMap<FlowKey, FlowRecord>,
+}
+
+#[derive(Default)]
+struct TelemetryState {
+    flows: BTreeMap<FlowKey, FlowRecord>,
+    sessions: BTreeMap<u64, SessionRecord>,
+    unattributed_packets: u64,
+    unattributed_bytes: u64,
+    dropped_flows: u64,
+}
+
+struct RelayTelemetry {
+    boot_id: u64,
+    state: Mutex<TelemetryState>,
+}
+
+impl RelayTelemetry {
+    fn new() -> Self {
+        Self {
+            boot_id: now_millis(),
+            state: Mutex::new(TelemetryState::default()),
+        }
+    }
+
+    fn start_session(&self, session_id: u64, remote_address: String, now: u64) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        prune_telemetry(&mut state, now);
+        state.sessions.insert(
+            session_id,
+            SessionRecord {
+                remote_address,
+                started_at: now,
+                last_seen: now,
+                closed_at: None,
+                packets_to_udp: 0,
+                packets_to_tcp: 0,
+                bytes_to_udp: 0,
+                bytes_to_tcp: 0,
+                flows: BTreeMap::new(),
+            },
+        );
+    }
+
+    fn finish_session(&self, session_id: u64, now: u64) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(session) = state.sessions.get_mut(&session_id) {
+            session.closed_at = Some(now);
+            session.last_seen = now;
+        }
+    }
+
+    fn observe(&self, session_id: u64, direction: RelayDirection, payload: &[u8], now: u64) {
+        if payload.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        prune_telemetry(&mut state, now);
+        if let Some(session) = state.sessions.get_mut(&session_id) {
+            session.last_seen = now;
+            match direction {
+                RelayDirection::ToUdp => {
+                    session.packets_to_udp = session.packets_to_udp.saturating_add(1);
+                    session.bytes_to_udp =
+                        session.bytes_to_udp.saturating_add(payload.len() as u64);
+                }
+                RelayDirection::ToTcp => {
+                    session.packets_to_tcp = session.packets_to_tcp.saturating_add(1);
+                    session.bytes_to_tcp =
+                        session.bytes_to_tcp.saturating_add(payload.len() as u64);
+                }
+            }
+        }
+
+        let Some((source, destination)) = parse_wire_addresses(payload) else {
+            state.unattributed_packets = state.unattributed_packets.saturating_add(1);
+            state.unattributed_bytes = state
+                .unattributed_bytes
+                .saturating_add(payload.len() as u64);
+            return;
+        };
+        let key = FlowKey {
+            source,
+            destination,
+        };
+        let mut dropped_flows = state.dropped_flows;
+        record_flow(
+            &mut state.flows,
+            key,
+            payload.len() as u64,
+            now,
+            &mut dropped_flows,
+            RELAY_FLOW_LIMIT,
+        );
+        if let Some(session) = state.sessions.get_mut(&session_id) {
+            record_flow(
+                &mut session.flows,
+                key,
+                payload.len() as u64,
+                now,
+                &mut dropped_flows,
+                RELAY_FLOW_LIMIT,
+            );
+        }
+        state.dropped_flows = dropped_flows;
+    }
+
+    fn render_json(&self, now: u64) -> String {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        prune_telemetry(&mut state, now);
+        let mut out = String::with_capacity(4096);
+        let boot_id = self.boot_id.to_string();
+        write!(
+            out,
+            "{{\"version\":1,\"observerId\":null,\"bootId\":{},\"clock\":{},\"confidence\":\"wire_observed\",\"networkId\":null,\"transport\":\"tcp_relay\",\"flows\":[",
+            json_quote(&boot_id),
+            now
+        )
+        .unwrap();
+
+        let mut clients: BTreeMap<u64, ClientTraffic> = BTreeMap::new();
+        for (index, (key, value)) in state.flows.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let active =
+                value.last_seen > 0 && now.saturating_sub(value.last_seen) <= RELAY_FLOW_ACTIVE_MS;
+            write!(
+                out,
+                "{{\"sourceNodeId\":{},\"destinationNodeId\":{},\"transport\":\"tcp_relay\",\"packets\":{},\"bytes\":{},\"firstSeen\":{},\"lastSeen\":{},\"active\":{}}}",
+                json_quote(&node_id(key.source)),
+                json_quote(&node_id(key.destination)),
+                json_quote(&value.packets.to_string()),
+                json_quote(&value.bytes.to_string()),
+                value.first_seen,
+                value.last_seen,
+                active
+            )
+            .unwrap();
+            let source = clients.entry(key.source).or_default();
+            source.packets_out = source.packets_out.saturating_add(value.packets);
+            source.bytes_out = source.bytes_out.saturating_add(value.bytes);
+            source.last_relayed_at = source.last_relayed_at.max(value.last_seen);
+            let destination = clients.entry(key.destination).or_default();
+            destination.packets_in = destination.packets_in.saturating_add(value.packets);
+            destination.bytes_in = destination.bytes_in.saturating_add(value.bytes);
+            destination.last_relayed_at = destination.last_relayed_at.max(value.last_seen);
+        }
+        out.push_str("],\"clients\":[");
+        for (index, (node, value)) in clients.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let total = value.bytes_in.saturating_add(value.bytes_out);
+            write!(
+                out,
+                "{{\"nodeId\":{},\"packetsIn\":{},\"packetsOut\":{},\"bytesIn\":{},\"bytesOut\":{},\"bytesTotal\":{},\"lastRelayedAt\":{}}}",
+                json_quote(&node_id(*node)),
+                json_quote(&value.packets_in.to_string()),
+                json_quote(&value.packets_out.to_string()),
+                json_quote(&value.bytes_in.to_string()),
+                json_quote(&value.bytes_out.to_string()),
+                json_quote(&total.to_string()),
+                value.last_relayed_at
+            )
+            .unwrap();
+        }
+        out.push_str("],\"sessions\":[");
+        for (index, (session_id, session)) in state.sessions.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let active = session.closed_at.is_none()
+                && now.saturating_sub(session.last_seen) <= RELAY_FLOW_ACTIVE_MS;
+            write!(
+                out,
+                "{{\"sessionId\":{},\"remoteAddress\":{},\"startedAt\":{},\"lastSeen\":{},\"closedAt\":{},\"active\":{},\"packetsToUdp\":{},\"packetsToTcp\":{},\"bytesToUdp\":{},\"bytesToTcp\":{},\"flowCount\":{}}}",
+                session_id,
+                json_quote(&session.remote_address),
+                session.started_at,
+                session.last_seen,
+                session
+                    .closed_at
+                    .map(|value| json_quote(&value.to_string()))
+                    .unwrap_or_else(|| "null".to_owned()),
+                active,
+                session.packets_to_udp,
+                session.packets_to_tcp,
+                session.bytes_to_udp,
+                session.bytes_to_tcp,
+                session.flows.len()
+            )
+            .unwrap();
+        }
+        write!(
+            out,
+            "],\"unattributed\":{{\"packets\":{},\"bytes\":{}}},\"droppedFlows\":{}}}",
+            json_quote(&state.unattributed_packets.to_string()),
+            json_quote(&state.unattributed_bytes.to_string()),
+            json_quote(&state.dropped_flows.to_string())
+        )
+        .unwrap();
+        out
+    }
+
+    fn render_prometheus(&self, now: u64) -> String {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        prune_telemetry(&mut state, now);
+        let active_flows = state
+            .flows
+            .values()
+            .filter(|flow| now.saturating_sub(flow.last_seen) <= RELAY_FLOW_ACTIVE_MS)
+            .count();
+        let active_sessions = state
+            .sessions
+            .values()
+            .filter(|session| {
+                session.closed_at.is_none()
+                    && now.saturating_sub(session.last_seen) <= RELAY_FLOW_ACTIVE_MS
+            })
+            .count();
+        format!(
+            concat!(
+                "# TYPE zt_relay_telemetry_active_flows gauge\nzt_relay_telemetry_active_flows {}\n",
+                "# TYPE zt_relay_telemetry_active_sessions gauge\nzt_relay_telemetry_active_sessions {}\n",
+                "# TYPE zt_relay_telemetry_unattributed_packets_total counter\nzt_relay_telemetry_unattributed_packets_total {}\n",
+                "# TYPE zt_relay_telemetry_unattributed_bytes_total counter\nzt_relay_telemetry_unattributed_bytes_total {}\n",
+                "# TYPE zt_relay_telemetry_dropped_flows_total counter\nzt_relay_telemetry_dropped_flows_total {}\n"
+            ),
+            active_flows,
+            active_sessions,
+            state.unattributed_packets,
+            state.unattributed_bytes,
+            state.dropped_flows
+        )
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn node_id(address: u64) -> String {
+    format!("{:010x}", address & 0xffffffffff)
+}
+
+fn json_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            character if character.is_control() => {
+                write!(out, "\\u{:04x}", character as u32).unwrap();
+            }
+            character => out.push(character),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn parse_wire_addresses(payload: &[u8]) -> Option<(u64, u64)> {
+    if payload.len() < ZT_PACKET_MIN_LEN {
+        return None;
+    }
+    let destination = parse_address(&payload[ZT_PACKET_DEST_OFFSET..])?;
+    let source = parse_address(&payload[ZT_PACKET_SOURCE_OFFSET..])?;
+    if source == 0 || destination == 0 || source == destination {
+        return None;
+    }
+    Some((source, destination))
+}
+
+fn parse_address(payload: &[u8]) -> Option<u64> {
+    let bytes = payload.get(..ZT_ADDRESS_LEN)?;
+    Some(
+        bytes
+            .iter()
+            .fold(0u64, |value, byte| (value << 8) | u64::from(*byte)),
+    )
+}
+
+fn record_flow(
+    flows: &mut BTreeMap<FlowKey, FlowRecord>,
+    key: FlowKey,
+    bytes: u64,
+    now: u64,
+    dropped_flows: &mut u64,
+    limit: usize,
+) {
+    if !flows.contains_key(&key) && flows.len() >= limit {
+        let oldest = flows
+            .iter()
+            .min_by_key(|(_, value)| value.last_seen)
+            .map(|(flow, _)| *flow);
+        if let Some(oldest) = oldest {
+            flows.remove(&oldest);
+            *dropped_flows = dropped_flows.saturating_add(1);
+        }
+    }
+    let value = flows.entry(key).or_default();
+    if value.first_seen == 0 {
+        value.first_seen = now;
+    }
+    value.last_seen = now;
+    value.packets = value.packets.saturating_add(1);
+    value.bytes = value.bytes.saturating_add(bytes);
+}
+
+fn prune_telemetry(state: &mut TelemetryState, now: u64) {
+    state
+        .flows
+        .retain(|_, flow| now.saturating_sub(flow.last_seen) <= RELAY_FLOW_RETENTION_MS);
+    state.sessions.retain(|_, session| {
+        session
+            .flows
+            .retain(|_, flow| now.saturating_sub(flow.last_seen) <= RELAY_FLOW_RETENTION_MS);
+        now.saturating_sub(session.last_seen) <= RELAY_SESSION_RETENTION_MS
+    });
+}
+
 struct RateWindow {
     started: Instant,
     packets: u64,
@@ -227,16 +604,25 @@ impl RateWindow {
 
 struct State {
     metrics: Metrics,
+    telemetry: Arc<RelayTelemetry>,
+    telemetry_token: Option<String>,
     per_ip: Mutex<HashMap<IpAddr, usize>>,
     global_rate: Mutex<RateWindow>,
+    next_session_id: AtomicU64,
 }
 
 impl State {
     fn new() -> Self {
         Self {
             metrics: Metrics::default(),
+            telemetry: Arc::new(RelayTelemetry::new()),
+            telemetry_token: env::var("RELAY_TELEMETRY_TOKEN")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty()),
             per_ip: Mutex::new(HashMap::new()),
             global_rate: Mutex::new(RateWindow::default()),
+            next_session_id: AtomicU64::new(1),
         }
     }
 
@@ -344,10 +730,11 @@ fn main() {
         if !state.reserve(peer.ip(), &cfg) {
             continue;
         }
+        let session_id = state.next_session_id.fetch_add(1, Ordering::Relaxed);
         let client_cfg = Arc::clone(&cfg);
         let client_state = Arc::clone(&state);
         thread::spawn(move || {
-            if let Err(error) = handle_client(stream, &client_cfg, &client_state) {
+            if let Err(error) = handle_client(stream, &client_cfg, &client_state, session_id) {
                 if !matches!(
                     error.kind(),
                     io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
@@ -373,7 +760,12 @@ fn source_allowed(ip: IpAddr, allowed: &[Ipv4Cidr]) -> bool {
     }
 }
 
-fn handle_client(mut tcp: TcpStream, cfg: &Config, state: &Arc<State>) -> io::Result<()> {
+fn handle_client(
+    mut tcp: TcpStream,
+    cfg: &Config,
+    state: &Arc<State>,
+    session_id: u64,
+) -> io::Result<()> {
     tcp.set_nodelay(true)?;
     tcp.set_read_timeout(Some(Duration::from_secs(1)))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -391,6 +783,13 @@ fn handle_client(mut tcp: TcpStream, cfg: &Config, state: &Arc<State>) -> io::Re
     }
 
     let udp = UdpSocket::bind("0.0.0.0:0")?;
+    let remote_address = tcp
+        .peer_addr()
+        .map(|address| address.to_string())
+        .unwrap_or_default();
+    state
+        .telemetry
+        .start_session(session_id, remote_address, now_millis());
     udp.set_read_timeout(Some(Duration::from_secs(1)))?;
     let udp_reader = udp.try_clone()?;
     let mut tcp_writer = tcp.try_clone()?;
@@ -402,6 +801,7 @@ fn handle_client(mut tcp: TcpStream, cfg: &Config, state: &Arc<State>) -> io::Re
     let destinations = Arc::new(Mutex::new(HashMap::<SocketAddr, u64>::new()));
     let response_destinations = Arc::clone(&destinations);
     let response_state = Arc::clone(state);
+    let response_telemetry = Arc::clone(&state.telemetry);
     let response_cfg = cfg.clone();
     let response_thread = thread::spawn(move || {
         let mut packet = [0u8; 4096];
@@ -453,6 +853,12 @@ fn handle_client(mut tcp: TcpStream, cfg: &Config, state: &Arc<State>) -> io::Re
                     if write_frame(&mut tcp_writer, source, &packet[..length]).is_err() {
                         break;
                     }
+                    response_telemetry.observe(
+                        session_id,
+                        RelayDirection::ToTcp,
+                        &packet[..length],
+                        now_millis(),
+                    );
                     response_state
                         .metrics
                         .packets_to_tcp
@@ -473,9 +879,19 @@ fn handle_client(mut tcp: TcpStream, cfg: &Config, state: &Arc<State>) -> io::Re
         response_running.store(false, Ordering::Release);
     });
 
-    let result = relay_requests(&mut tcp, &udp, cfg, state, &running, &destinations);
+    let result = relay_requests(
+        &mut tcp,
+        &udp,
+        cfg,
+        state,
+        &running,
+        &destinations,
+        session_id,
+        &state.telemetry,
+    );
     running.store(false, Ordering::Release);
     let _ = response_thread.join();
+    state.telemetry.finish_session(session_id, now_millis());
     result
 }
 
@@ -486,6 +902,8 @@ fn relay_requests(
     state: &Arc<State>,
     running: &AtomicBool,
     destinations: &Mutex<HashMap<SocketAddr, u64>>,
+    session_id: u64,
+    telemetry: &Arc<RelayTelemetry>,
 ) -> io::Result<()> {
     let mut local_rate = RateWindow::default();
     while running.load(Ordering::Acquire) {
@@ -567,6 +985,7 @@ fn relay_requests(
             // is recorded. A fast UDP reply must not race its allowlist entry.
             let mut credits = destinations.lock().unwrap_or_else(|e| e.into_inner());
             udp.send_to(payload, destination)?;
+            telemetry.observe(session_id, RelayDirection::ToUdp, payload, now_millis());
             let credit = credits.entry(destination).or_default();
             let additional = (payload.len() as u64).saturating_mul(4).max(512);
             *credit = credit.saturating_add(additional).min(MAX_RESPONSE_CREDIT);
@@ -734,23 +1153,61 @@ fn serve_metrics(address: SocketAddr, state: Arc<State>) {
         let mut request = [0u8; 1024];
         let length = stream.read(&mut request).unwrap_or(0);
         let request_line = String::from_utf8_lossy(&request[..length]);
-        let (status, body) = if request_line.starts_with("GET /metrics ") {
-            ("200 OK", state.metrics.render())
+        let (status, content_type, body) = if request_line.starts_with("GET /metrics ") {
+            (
+                "200 OK",
+                "text/plain; version=0.0.4; charset=utf-8",
+                format!(
+                    "{}{}",
+                    state.metrics.render(),
+                    state.telemetry.render_prometheus(now_millis())
+                ),
+            )
+        } else if request_line.starts_with("GET /relay/telemetry ")
+            && telemetry_request_authorized(&request_line, state.telemetry_token.as_deref())
+        {
+            (
+                "200 OK",
+                "application/json; charset=utf-8",
+                state.telemetry.render_json(now_millis()),
+            )
+        } else if request_line.starts_with("GET /relay/telemetry ") {
+            (
+                "401 Unauthorized",
+                "text/plain; charset=utf-8",
+                "unauthorized\n".to_owned(),
+            )
         } else if request_line.starts_with("GET /healthz ") {
-            ("200 OK", "ok\n".to_owned())
+            ("200 OK", "text/plain; charset=utf-8", "ok\n".to_owned())
         } else {
-            ("404 Not Found", "not found\n".to_owned())
+            (
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                "not found\n".to_owned(),
+            )
         };
         let date = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|v| v.as_secs())
             .unwrap_or_default();
         let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Relay-Time: {date}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Relay-Time: {date}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         let _ = stream.write_all(response.as_bytes());
     }
+}
+
+fn telemetry_request_authorized(request: &str, expected: Option<&str>) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    request.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("x-relay-telemetry-token") && value.trim() == expected
+    })
 }
 
 #[cfg(test)]
@@ -888,5 +1345,49 @@ mod tests {
             credit = credit.saturating_add(additional).min(MAX_RESPONSE_CREDIT);
         }
         assert_eq!(credit, MAX_RESPONSE_CREDIT);
+    }
+
+    #[test]
+    fn wire_header_parser_extracts_zero_tier_addresses() {
+        let mut packet = vec![0u8; ZT_PACKET_MIN_LEN];
+        packet[ZT_PACKET_DEST_OFFSET..ZT_PACKET_DEST_OFFSET + ZT_ADDRESS_LEN]
+            .copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05]);
+        packet[ZT_PACKET_SOURCE_OFFSET..ZT_PACKET_SOURCE_OFFSET + ZT_ADDRESS_LEN]
+            .copy_from_slice(&[0x0a, 0x0b, 0x0c, 0x0d, 0x0e]);
+        assert_eq!(
+            parse_wire_addresses(&packet),
+            Some((0x0a0b0c0d0e, 0x0102030405))
+        );
+        assert!(parse_wire_addresses(&packet[..ZT_PACKET_MIN_LEN - 1]).is_none());
+        packet[ZT_PACKET_SOURCE_OFFSET..ZT_PACKET_SOURCE_OFFSET + ZT_ADDRESS_LEN]
+            .copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05]);
+        assert!(parse_wire_addresses(&packet).is_none());
+    }
+
+    #[test]
+    fn relay_telemetry_aggregates_flows_and_session_directions() {
+        let telemetry = RelayTelemetry {
+            boot_id: 42,
+            state: Mutex::new(TelemetryState::default()),
+        };
+        telemetry.start_session(7, "198.51.100.20:443".to_owned(), 1_000);
+        let mut packet = vec![0u8; ZT_PACKET_MIN_LEN + 3];
+        packet[ZT_PACKET_DEST_OFFSET..ZT_PACKET_DEST_OFFSET + ZT_ADDRESS_LEN]
+            .copy_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05]);
+        packet[ZT_PACKET_SOURCE_OFFSET..ZT_PACKET_SOURCE_OFFSET + ZT_ADDRESS_LEN]
+            .copy_from_slice(&[0x0a, 0x0b, 0x0c, 0x0d, 0x0e]);
+        telemetry.observe(7, RelayDirection::ToUdp, &packet, 1_001);
+        telemetry.observe(7, RelayDirection::ToTcp, &packet, 1_002);
+        let json = telemetry.render_json(1_003);
+        assert!(json.contains("\"sourceNodeId\":\"0a0b0c0d0e\""));
+        assert!(json.contains("\"destinationNodeId\":\"0102030405\""));
+        assert!(json.contains("\"bytes\":\"62\""));
+        assert!(json.contains("\"packetsToUdp\":1"));
+        assert!(json.contains("\"packetsToTcp\":1"));
+        assert!(json.contains("\"active\":true"));
+        telemetry.finish_session(7, 1_004);
+        let closed = telemetry.render_json(1_005);
+        assert!(closed.contains("\"closedAt\":\"1004\""));
+        assert!(closed.contains("\"active\":false"));
     }
 }
